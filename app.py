@@ -20,8 +20,13 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from core import ConversionJob, FORMAT_PRESETS, JobConfig, check_binaries
+from runtime import free_port, resource_path
 
-app = Flask(__name__, static_folder="static", static_url_path="")
+# static_folder has to be an absolute path. Flask normally works it out
+# relative to this file, but in a PyInstaller build the UI files are
+# unpacked into a temporary folder at launch, so that guess lands
+# somewhere that doesn't exist and every page 404s.
+app = Flask(__name__, static_folder=str(resource_path("static")), static_url_path="")
 
 JOBS: dict[str, dict] = {}  # job_id -> {"job": ConversionJob, "events": Queue}
 
@@ -161,4 +166,6 @@ def api_stream(job_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=False, port=5000, threaded=True)
+    port = free_port(5000)
+    print(f"FlacPress is running — open http://127.0.0.1:{port}")
+    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)

@@ -38,7 +38,6 @@ import base64
 import json
 import os
 import queue
-import shutil
 import subprocess
 import threading
 import time
@@ -46,6 +45,8 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
+
+from runtime import NO_WINDOW, find_tool
 
 try:
     import mutagen
@@ -114,8 +115,11 @@ FORMAT_PRESETS = {
     },
 }
 
-FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
-FFPROBE = shutil.which("ffprobe") or "ffprobe"
+# Resolved through find_tool() rather than shutil.which() alone: a user who
+# downloads a release has no reason to have ffmpeg on PATH, so the copy
+# shipped inside the build (or dropped next to the .exe) has to win first.
+FFMPEG = find_tool("ffmpeg")
+FFPROBE = find_tool("ffprobe")
 
 
 def _bitrate_option(fmt: str, bitrate_id: Optional[str]) -> dict:
@@ -144,6 +148,7 @@ def check_binaries() -> list[str]:
                 stderr=subprocess.DEVNULL,
                 timeout=10,
                 check=True,
+                **NO_WINDOW,
             )
         except Exception:
             missing.append(name)
@@ -158,7 +163,7 @@ def probe_audio_codec(file: Path) -> Optional[str]:
                 FFPROBE, "-v", "error", "-select_streams", "a:0",
                 "-show_entries", "stream=codec_name", "-of", "json", str(file),
             ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, **NO_WINDOW,
         )
         data = json.loads(result.stdout or b"{}")
         streams = data.get("streams") or []
@@ -175,7 +180,7 @@ def verify_output(file: Path) -> bool:
     try:
         result = subprocess.run(
             [FFPROBE, "-v", "error", str(file)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, **NO_WINDOW,
         )
         return result.returncode == 0
     except Exception:
@@ -317,7 +322,7 @@ def probe_cover_stream(file: Path) -> Optional[dict]:
                 FFPROBE, "-v", "error", "-select_streams", "v:0",
                 "-show_entries", "stream=codec_name,width,height", "-of", "json", str(file),
             ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, **NO_WINDOW,
         )
         data = json.loads(result.stdout or b"{}")
         streams = data.get("streams") or []
@@ -335,7 +340,7 @@ def extract_cover_bytes(file: Path) -> Optional[bytes]:
                 FFMPEG, "-v", "error", "-i", str(file), "-an", "-map", "0:v:0",
                 "-c", "copy", "-f", "image2pipe", "-frames:v", "1", "pipe:1",
             ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, **NO_WINDOW,
         )
         if result.returncode == 0 and result.stdout:
             return result.stdout
@@ -434,7 +439,8 @@ class ConversionJob:
         self.on_event({"type": event_type, "ts": time.time(), **data})
 
     def _run_ffmpeg(self, slot: int, command: list[str]) -> tuple[int, bytes]:
-        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, **NO_WINDOW)
         with self._lock:
             self._active_procs[slot] = proc
         try:
@@ -528,7 +534,8 @@ class ConversionJob:
         missing = check_binaries()
         if missing:
             self.emit("error", detail=f"Missing required tool(s): {', '.join(missing)}. "
-                                       f"Install ffmpeg and make sure it's on PATH.")
+                                       f"Install ffmpeg and put it on PATH, or place "
+                                       f"ffmpeg and ffprobe next to FlacPress.")
             return
 
         preset = FORMAT_PRESETS[cfg.output_format]
