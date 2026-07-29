@@ -12,7 +12,6 @@ Batch convert your lossless music library to high-quality <b>Opus</b>, <b>MP3</b
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-success)
 
 </p>
 
@@ -51,9 +50,6 @@ Batch convert your lossless music library to high-quality <b>Opus</b>, <b>MP3</b
 
 ![alt text](image-1.png)
 
-```text
-docs/images/ui.png
-```
 
 ---
 
