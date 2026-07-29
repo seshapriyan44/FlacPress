@@ -11,7 +11,7 @@ on top of a fast, parallel conversion engine.
 ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 
 <!-- Swap this for a real screenshot or screen-recording GIF of the UI before publishing -->
-> 🖼️ *Screenshot / demo GIF goes here*
+> 🖼️ ![screenshot](image.png)
 
 ## Why
 
