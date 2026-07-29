@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.Python
+build/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# FlacPress default output folders (don't commit converted libraries)
+/OPUS/
+/MP3/
+/AAC/
+**/OPUS/
+**/MP3/
+**/AAC/
+
+# Logs
+*.log

@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FlacPress — batch audio converter</title>
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* Black + red, matched to the FlacPress logo (sampled: heart red ~#af362e). */
+    --surface:#0b0a0a;
+    --surface-1:#151011;
+    --surface-2:#1c1315;
+    --surface-glass: rgba(28,19,21,0.6);
+    --outline: rgba(255,255,255,0.08);
+    --outline-strong: rgba(255,255,255,0.15);
+    --text:#f1efee;
+    --text-muted:#9c9598;
+
+    --primary:#e0453d;              /* brand red — buttons, active states, accents */
+    --primary-container:#3a1512;
+    --on-primary-container:#ff9a8d;
+
+    --success:#4ade80;              /* converted — kept distinct (green) from the brand/error red on purpose */
+    --success-container:#123420;
+
+    --warn:#f5a35c;                 /* dry-run / secondary state */
+    --warn-container:#3a2712;
+
+    --error:#ff5c56;                /* failed — brighter/more saturated than brand red so the two read as distinct */
+    --error-container:#3a1210;
+
+    --muted-container:#232022;      /* skipped */
+
+    --radius-lg:28px;
+    --radius-md:18px;
+    --radius-sm:12px;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--surface);   /* flat — no viewport-relative gradient blobs, so no seam appears on scroll/resize */
+    color:var(--text);
+    font-family:'Inter',sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{max-width:1200px;margin:0 auto;padding:28px 22px 60px;}
+
+  header{
+    display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;
+    padding:18px 20px;border-radius:var(--radius-lg);
+    /* glow is contained to the header box itself, not the viewport, so it can never create a seam elsewhere on the page */
+    background:radial-gradient(420px 160px at 8% 30%, rgba(224,69,61,0.16), transparent 70%), var(--surface-1);
+    border:1px solid var(--outline);
+  }
+  .brand{display:flex;align-items:center;gap:14px;}
+  .brand-logo{height:52px;width:auto;display:block;filter:drop-shadow(0 2px 10px rgba(224,69,61,0.35));}
+  .brand h1{
+    font-family:'Manrope',sans-serif;
+    font-weight:800;
+    font-size:28px;
+    letter-spacing:0.2px;
+    margin:0;
+    color:var(--text);
+  }
+  .brand h1 span{color:var(--primary);}
+  .brand p{margin:3px 0 0;color:var(--text-muted);font-size:13.5px;}
+  .status-pill{
+    font-family:'JetBrains Mono',monospace;
+    font-size:12px;
+    padding:7px 14px;
+    border-radius:999px;
+    background:var(--surface-glass);
+    border:1px solid var(--outline);
+    color:var(--text-muted);
+    display:flex;align-items:center;gap:8px;
+    backdrop-filter: blur(8px);
+  }
+  .status-dot{width:7px;height:7px;border-radius:50%;background:var(--text-muted);}
+  .status-pill.ok{color:var(--success);border-color:rgba(74,222,128,0.28);}
+  .status-pill.ok .status-dot{background:var(--success);}
+  .status-pill.bad{color:var(--error);border-color:rgba(255,92,86,0.35);}
+  .status-pill.bad .status-dot{background:var(--error);}
+
+  .layout{display:grid;grid-template-columns:340px 1fr;gap:20px;}
+  @media (max-width:900px){.layout{grid-template-columns:1fr;}}
+
+  .panel{
+    background: linear-gradient(180deg, var(--surface-1), var(--surface-2));
+    border:1px solid var(--outline);
+    border-radius:var(--radius-lg);
+    padding:20px;
+    position:relative;
+  }
+  .panel::before{
+    /* cheap "glass sheen" — a static gradient, no blur, no GPU cost */
+    content:"";
+    position:absolute; inset:0; border-radius:inherit;
+    background:linear-gradient(160deg, rgba(255,255,255,0.04), transparent 40%);
+    pointer-events:none;
+  }
+  .panel h2{
+    font-family:'Manrope',sans-serif;
+    font-size:13px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:1.2px;
+    color:var(--text-muted);
+    margin:0 0 16px;
+  }
+
+  label{display:block;font-size:12.5px;color:var(--text-muted);margin:16px 0 7px;}
+  label:first-of-type{margin-top:0;}
+  input[type=text], input[type=number], select{
+    width:100%;
+    background:var(--surface);
+    border:1px solid var(--outline-strong);
+    color:var(--text);
+    border-radius:var(--radius-sm);
+    padding:11px 13px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:13px;
+    appearance:none;
+    -webkit-appearance:none;
+  }
+  input[type=text]:focus, input[type=number]:focus, select:focus{
+    outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(224,69,61,0.16);
+  }
+  select{
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9'%3E%3Cpath d='M1 1l6 6 6-6' stroke='%239c9598' stroke-width='1.6' fill='none'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 13px center;padding-right:34px;
+  }
+  .row{display:flex;gap:8px;}
+  .row > *{flex:1;}
+  .browse-btn{
+    flex:0 0 auto;
+    background:var(--primary-container);border:1px solid var(--outline);color:var(--on-primary-container);
+    border-radius:var(--radius-sm);padding:0 16px;cursor:pointer;font-size:12.5px;font-weight:600;
+    transition:background .15s;
+  }
+  .browse-btn:hover{background:#4a1a16;}
+
+  .hint{font-size:11.5px;color:var(--text-muted);margin-top:6px;line-height:1.4;}
+
+  .bitrate-desc{
+    font-size:12px;color:var(--text-muted);margin-top:7px;line-height:1.45;
+    padding:8px 11px;background:var(--surface);border-radius:var(--radius-sm);border:1px solid var(--outline);
+  }
+
+  .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:11px 2px;border-bottom:1px solid var(--outline);}
+  .toggle-row:last-child{border-bottom:none;}
+  .toggle-row span{font-size:13.5px;}
+  .switch{position:relative;width:40px;height:22px;flex:0 0 auto;}
+  .switch input{opacity:0;width:0;height:0;}
+  .slider{position:absolute;inset:0;background:#2a2426;border-radius:999px;cursor:pointer;transition:.15s;}
+  .slider:before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;background:#8a8386;border-radius:50%;transition:.15s;}
+  input:checked + .slider{background:#4a1a16;}
+  input:checked + .slider:before{transform:translateX(18px);background:var(--primary);}
+
+  .convert-btn{
+    width:100%;margin-top:20px;padding:14px;border:none;border-radius:999px;
+    background:var(--primary);color:#fff;font-weight:800;font-size:14.5px;
+    font-family:'Manrope',sans-serif;cursor:pointer;letter-spacing:0.2px;
+    transition:filter .15s, transform .1s;
+  }
+  .convert-btn:hover:not(:disabled){filter:brightness(1.1);}
+  .convert-btn:active:not(:disabled){transform:scale(0.99);}
+  .convert-btn:disabled{background:#2a2224;color:#6b6466;cursor:not-allowed;}
+  .cancel-btn{
+    width:100%;margin-top:10px;padding:11px;border-radius:999px;
+    background:var(--error-container);border:1px solid rgba(255,92,86,0.3);color:var(--error);
+    font-size:13px;font-weight:600;cursor:pointer;display:none;
+  }
+  .cancel-btn.show{display:block;}
+
+  .banner{
+    display:none;margin-bottom:16px;padding:12px 16px;border-radius:var(--radius-md);
+    background:var(--error-container);border:1px solid rgba(255,92,86,0.3);
+    color:#ffc8c4;font-size:13.5px;
+  }
+  .banner.show{display:block;}
+
+  .stat-row{display:flex;gap:14px;margin-bottom:18px;}
+  .stat{
+    flex:1;background:var(--surface-1);border:1px solid var(--outline);border-radius:var(--radius-md);
+    padding:16px 18px;position:relative;overflow:hidden;
+  }
+  .stat .num{font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:700;}
+  .stat .lbl{font-size:11.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-top:3px;}
+  .stat.converted .num{color:var(--success);}
+  .stat.failed .num{color:var(--error);}
+  .stat.skipped .num{color:var(--text-muted);}
+  .stat.total .num{color:var(--primary);}
+
+  .lanes{display:flex;flex-direction:column;gap:8px;}
+  .lane{
+    display:flex;align-items:center;gap:12px;
+    background:var(--surface); border:1px solid var(--outline); border-radius:var(--radius-sm);
+    padding:11px 14px;min-height:44px;
+    transition:border-color .15s, background .15s;
+  }
+  .lane.active{border-color:rgba(224,69,61,0.4); background:var(--primary-container);}
+  .lane .idx{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);width:20px;flex:0 0 auto;}
+  .eq{display:flex;align-items:center;gap:2.5px;width:22px;height:18px;flex:0 0 auto;}
+  .eq i{display:block;width:3px;background:var(--outline-strong);border-radius:2px;height:6px;}
+  .lane.active .eq i{background:var(--primary);animation:eq 0.9s ease-in-out infinite;}
+  .lane.active .eq i:nth-child(1){animation-delay:0s;}
+  .lane.active .eq i:nth-child(2){animation-delay:.15s;}
+  .lane.active .eq i:nth-child(3){animation-delay:.3s;}
+  .lane.active .eq i:nth-child(4){animation-delay:.45s;}
+  @keyframes eq{
+    0%,100%{height:5px;}
+    50%{height:17px;}
+  }
+  .lane .fname{
+    font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-muted);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;
+  }
+  .lane.active .fname{color:var(--text);}
+  .lane .tag{font-size:10.5px;padding:3px 9px;border-radius:999px;flex:0 0 auto;font-family:'JetBrains Mono',monospace;font-weight:600;}
+  .lane .tag.converted{background:var(--success-container);color:var(--success);}
+  .lane .tag.failed{background:var(--error-container);color:var(--error);}
+  .lane .tag.skipped, .lane .tag.skipped_lossy{background:var(--muted-container);color:var(--text-muted);}
+  .lane .tag.dry{background:var(--warn-container);color:var(--warn);}
+
+  .log-panel{margin-top:18px;}
+  .log-panel h2{margin-bottom:10px;}
+  .log{
+    height:220px;overflow-y:auto;background:var(--surface);border-radius:var(--radius-md);border:1px solid var(--outline);
+    padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.65;
+  }
+  .log .entry{white-space:pre-wrap;word-break:break-all;}
+  .log .entry.converted{color:var(--success);}
+  .log .entry.failed{color:var(--error);}
+  .log .entry.skipped, .log .entry.skipped_lossy{color:var(--text-muted);}
+  .log .entry.dry{color:var(--warn);}
+  .log .t{color:#565253;}
+  .empty-hint{color:var(--text-muted);font-size:13px;padding:34px 0;text-align:center;}
+
+  /* modal */
+  .modal-backdrop{
+    display:none;position:fixed;inset:0;background:rgba(3,2,2,0.6);
+    align-items:center;justify-content:center;z-index:20;
+  }
+  .modal-backdrop.show{display:flex;}
+  .modal{
+    width:520px;max-width:92vw;max-height:74vh;display:flex;flex-direction:column;
+    background:linear-gradient(180deg, var(--surface-1), var(--surface-2));
+    border:1px solid var(--outline-strong);border-radius:var(--radius-lg);
+    overflow:hidden;
+  }
+  .modal-head{padding:16px 18px;border-bottom:1px solid var(--outline);display:flex;align-items:center;gap:10px;}
+  .modal-head .path{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+  .modal-crumb-btn{
+    background:var(--primary-container);border:none;color:var(--on-primary-container);border-radius:999px;
+    padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer;flex:0 0 auto;
+  }
+  .modal-list{overflow-y:auto;flex:1;padding:8px;}
+  .modal-item{
+    padding:11px 12px;border-radius:var(--radius-sm);cursor:pointer;font-size:13.5px;display:flex;align-items:center;gap:9px;
+  }
+  .modal-item:hover{background:var(--surface-2);}
+  .modal-item.up{color:var(--text-muted);}
+  .modal-item.drive{color:var(--on-primary-container);}
+  .modal-foot{padding:14px 18px;border-top:1px solid var(--outline);display:flex;gap:10px;justify-content:flex-end;}
+  .btn-secondary{background:transparent;border:1px solid var(--outline-strong);color:var(--text-muted);border-radius:999px;padding:9px 16px;cursor:pointer;font-size:13px;font-weight:600;}
+  .btn-primary{background:var(--primary);border:none;color:#fff;font-weight:700;border-radius:999px;padding:9px 18px;cursor:pointer;font-size:13px;}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div class="brand">
+      <img src="assets/logo-transparent.png" alt="FlacPress" class="brand-logo" />
+      <div>
+        <h1>FLAC<span>PRESS</span></h1>
+        <p>Local batch audio converter — flac / wav / alac → opus, mp3 or aac</p>
+      </div>
+    </div>
+    <div class="status-pill" id="statusPill"><span class="status-dot"></span><span id="statusText">checking ffmpeg…</span></div>
+  </header>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="layout">
+    <aside class="panel config-panel">
+      <h2>Configure</h2>
+
+      <label for="sourceInput">Source folder</label>
+      <div class="row">
+        <input type="text" id="sourceInput" placeholder="e.g. D:\Music" />
+        <button class="browse-btn" id="browseSourceBtn" type="button">Browse</button>
+      </div>
+
+      <label for="destInput">Destination folder</label>
+      <div class="row">
+        <input type="text" id="destInput" placeholder="leave blank for source's parent folder" />
+        <button class="browse-btn" id="browseDestBtn" type="button">Browse</button>
+      </div>
+      <div class="hint" id="destHint">Mirrors the source's folder structure; only the album folder gets " FORMAT" appended to its name.</div>
+
+      <label for="formatSelect">Output format</label>
+      <select id="formatSelect">
+        <option value="opus">Opus (.opus)</option>
+        <option value="mp3">MP3 (.mp3)</option>
+        <option value="aac">AAC (.m4a)</option>
+      </select>
+
+      <label for="bitrateSelect">Quality</label>
+      <select id="bitrateSelect"></select>
+      <div class="bitrate-desc" id="bitrateDesc"></div>
+
+      <label for="workersInput">Parallel workers</label>
+      <input type="number" id="workersInput" min="1" max="32" value="4" />
+
+      <div style="margin-top:18px;">
+        <div class="toggle-row">
+          <span>Skip already-lossy .m4a</span>
+          <label class="switch"><input type="checkbox" id="skipLossy" checked><span class="slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span>Embed cover art</span>
+          <label class="switch"><input type="checkbox" id="embedCover" checked><span class="slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span>Verify output with ffprobe</span>
+          <label class="switch"><input type="checkbox" id="verifyOut" checked><span class="slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span>Overwrite existing output</span>
+          <label class="switch"><input type="checkbox" id="forceOverwrite"><span class="slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span>Dry run (no files written)</span>
+          <label class="switch"><input type="checkbox" id="dryRun"><span class="slider"></span></label>
+        </div>
+      </div>
+
+      <button class="convert-btn" id="convertBtn">Start conversion</button>
+      <button class="cancel-btn" id="cancelBtn">Cancel job</button>
+    </aside>
+
+    <main>
+      <div class="stat-row">
+        <div class="stat total"><div class="num" id="statTotal">0</div><div class="lbl">Total</div></div>
+        <div class="stat converted"><div class="num" id="statConverted">0</div><div class="lbl">Converted</div></div>
+        <div class="stat skipped"><div class="num" id="statSkipped">0</div><div class="lbl">Skipped</div></div>
+        <div class="stat failed"><div class="num" id="statFailed">0</div><div class="lbl">Failed</div></div>
+      </div>
+
+      <div class="panel" style="margin-bottom:0;">
+        <h2>Workers</h2>
+        <div class="lanes" id="lanes">
+          <div class="empty-hint">Set a source folder and press Start to begin.</div>
+        </div>
+      </div>
+
+      <div class="panel log-panel">
+        <h2>Log</h2>
+        <div class="log" id="log"></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="browseBackdrop">
+  <div class="modal">
+    <div class="modal-head">
+      <button class="modal-crumb-btn" id="thisPcBtn" type="button">🖥 This PC</button>
+      <div class="path" id="modalPath">/</div>
+    </div>
+    <div class="modal-list" id="modalList"></div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="modalCancel">Cancel</button>
+      <button class="btn-primary" id="modalSelect">Select this folder</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let presets = {};
+let currentJobId = null;
+let evtSource = null;
+
+async function init(){
+  const res = await fetch('/api/check');
+  const data = await res.json();
+  presets = data.presets;
+  const pill = $('statusPill'), text = $('statusText');
+  if(data.ok){
+    pill.classList.add('ok');
+    text.textContent = 'ffmpeg ready';
+  } else {
+    pill.classList.add('bad');
+    text.textContent = 'missing: ' + data.missing.join(', ');
+    showBanner('ffmpeg/ffprobe not found on PATH. Install ffmpeg and reload this page.');
+  }
+  $('workersInput').value = Math.max(1, data.cpu_count - 2);
+  $('workersInput').max = data.cpu_count;
+  populateBitrates();
+}
+
+function showBanner(msg){
+  const b = $('banner');
+  b.textContent = msg;
+  b.classList.add('show');
+}
+function hideBanner(){ $('banner').classList.remove('show'); }
+
+function populateBitrates(){
+  const fmt = $('formatSelect').value;
+  const preset = presets[fmt];
+  if(!preset) return;
+  const sel = $('bitrateSelect');
+  sel.innerHTML = '';
+  preset.bitrate_options.forEach(opt => {
+    const el = document.createElement('option');
+    el.value = opt.id;
+    el.textContent = opt.label;
+    if(opt.default) el.selected = true;
+    sel.appendChild(el);
+  });
+  updateBitrateDesc();
+  $('destHint').textContent = `Mirrors the source's folder structure; only the album folder gets " ${fmt.toUpperCase()}" appended to its name.`;
+}
+function updateBitrateDesc(){
+  const fmt = $('formatSelect').value;
+  const preset = presets[fmt];
+  const id = $('bitrateSelect').value;
+  const opt = preset.bitrate_options.find(o => o.id === id) || preset.bitrate_options[0];
+  $('bitrateDesc').textContent = opt.desc + (preset.embed_cover ? '' : ' — cover art is embedded separately via a METADATA_BLOCK_PICTURE tag (Ogg containers can\'t stream-copy it directly).');
+}
+$('formatSelect').addEventListener('change', populateBitrates);
+$('bitrateSelect').addEventListener('change', updateBitrateDesc);
+
+// ---------- folder browser modal (shared between source + destination) ----------
+let browseCallbackPath = '';
+let browseTargetInput = 'sourceInput';
+
+$('browseSourceBtn').addEventListener('click', () => openBrowser('sourceInput', $('sourceInput').value || null));
+$('browseDestBtn').addEventListener('click', () => openBrowser('destInput', $('destInput').value || null));
+$('modalCancel').addEventListener('click', () => $('browseBackdrop').classList.remove('show'));
+$('modalSelect').addEventListener('click', () => {
+  $(browseTargetInput).value = browseCallbackPath;
+  $('browseBackdrop').classList.remove('show');
+});
+$('thisPcBtn').addEventListener('click', loadRoot);
+
+async function openBrowser(targetInputId, path){
+  browseTargetInput = targetInputId;
+  $('browseBackdrop').classList.add('show');
+  if(path){ await loadDir(path); } else { await loadRoot(); }
+}
+
+async function loadRoot(){
+  const res = await fetch('/api/drives');
+  const data = await res.json();
+  browseCallbackPath = data.home;
+  $('modalPath').textContent = 'This PC';
+  const list = $('modalList');
+  list.innerHTML = '';
+  data.drives.forEach(drive => {
+    const item = document.createElement('div');
+    item.className = 'modal-item drive';
+    item.textContent = '💽 ' + drive;
+    item.onclick = () => loadDir(drive);
+    list.appendChild(item);
+  });
+  const homeItem = document.createElement('div');
+  homeItem.className = 'modal-item';
+  homeItem.textContent = '🏠 ' + data.home;
+  homeItem.onclick = () => loadDir(data.home);
+  list.appendChild(homeItem);
+}
+
+async function loadDir(path){
+  const url = `/api/browse?path=${encodeURIComponent(path)}`;
+  const res = await fetch(url);
+  if(!res.ok){ return; }
+  const data = await res.json();
+  browseCallbackPath = data.path;
+  $('modalPath').textContent = data.path;
+  const list = $('modalList');
+  list.innerHTML = '';
+  if(data.parent){
+    const up = document.createElement('div');
+    up.className = 'modal-item up';
+    up.textContent = '⬆ .. (up)';
+    up.onclick = () => loadDir(data.parent);
+    list.appendChild(up);
+  }
+  data.dirs.forEach(name => {
+    const item = document.createElement('div');
+    item.className = 'modal-item';
+    item.textContent = '📁 ' + name;
+    const sep = data.path.includes('\\') ? '\\' : '/';
+    const full = data.path.endsWith(sep) ? data.path + name : data.path + sep + name;
+    item.onclick = () => loadDir(full);
+    list.appendChild(item);
+  });
+}
+
+// ---------- conversion lanes ----------
+function buildLanes(n){
+  const lanes = $('lanes');
+  lanes.innerHTML = '';
+  for(let i = 0; i < n; i++){
+    const lane = document.createElement('div');
+    lane.className = 'lane';
+    lane.id = 'lane-' + i;
+    lane.innerHTML = `
+      <span class="idx">${String(i).padStart(2,'0')}</span>
+      <span class="eq"><i></i><i></i><i></i><i></i></span>
+      <span class="fname">idle</span>
+    `;
+    lanes.appendChild(lane);
+  }
+}
+function setLaneActive(slot, filename){
+  const lane = $('lane-' + slot);
+  if(!lane) return;
+  lane.classList.add('active');
+  lane.querySelector('.fname').textContent = filename;
+  const old = lane.querySelector('.tag');
+  if(old) old.remove();
+}
+function setLaneDone(slot, filename, status){
+  const lane = $('lane-' + slot);
+  if(!lane) return;
+  lane.classList.remove('active');
+  lane.querySelector('.fname').textContent = filename;
+  let tag = lane.querySelector('.tag');
+  if(!tag){
+    tag = document.createElement('span');
+    tag.className = 'tag';
+    lane.appendChild(tag);
+  }
+  tag.className = 'tag ' + status;
+  tag.textContent = status.replace('_',' ');
+}
+
+function logLine(text, status){
+  const log = $('log');
+  const time = new Date().toLocaleTimeString();
+  const entry = document.createElement('div');
+  entry.className = 'entry' + (status ? ' ' + status : '');
+  entry.textContent = `[${time}] ${text}`;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+}
+
+function setStats(stats){
+  $('statConverted').textContent = stats.converted || 0;
+  $('statSkipped').textContent = (stats.skipped || 0) + (stats.skipped_lossy || 0);
+  $('statFailed').textContent = stats.failed || 0;
+}
+
+// ---------- start / cancel ----------
+$('convertBtn').addEventListener('click', startJob);
+$('cancelBtn').addEventListener('click', cancelJob);
+
+async function startJob(){
+  hideBanner();
+  const source_dir = $('sourceInput').value.trim();
+  if(!source_dir){ showBanner('Enter or browse to a source folder first.'); return; }
+
+  const payload = {
+    source_dir,
+    destination_dir: $('destInput').value.trim(),
+    format: $('formatSelect').value,
+    bitrate: $('bitrateSelect').value,
+    workers: parseInt($('workersInput').value, 10) || 4,
+    dry_run: $('dryRun').checked,
+    force: $('forceOverwrite').checked,
+    verify: $('verifyOut').checked,
+    skip_lossy_m4a: $('skipLossy').checked,
+    embed_cover_art: $('embedCover').checked,
+  };
+
+  const res = await fetch('/api/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if(!res.ok){ showBanner(data.error || 'Failed to start job.'); return; }
+
+  currentJobId = data.job_id;
+  $('log').innerHTML = '';
+  setStats({});
+  $('statTotal').textContent = '…';
+  buildLanes(payload.workers);
+  logLine(`Started — output → ${data.output_dir}`);
+
+  $('convertBtn').disabled = true;
+  $('cancelBtn').classList.add('show');
+
+  evtSource = new EventSource(`/api/stream/${currentJobId}`);
+  evtSource.onmessage = (ev) => {
+    const event = JSON.parse(ev.data);
+    handleEvent(event);
+  };
+  evtSource.onerror = () => { evtSource.close(); };
+}
+
+async function cancelJob(){
+  if(!currentJobId) return;
+  await fetch(`/api/cancel/${currentJobId}`, {method: 'POST'});
+  logLine('Cancel requested…', 'failed');
+}
+
+function handleEvent(event){
+  switch(event.type){
+    case 'scan_done':
+      $('statTotal').textContent = event.total;
+      logLine(`Found ${event.total} lossless file(s).`);
+      break;
+    case 'file_start':
+      setLaneActive(event.slot, event.file);
+      break;
+    case 'file_done':
+      setLaneDone(event.slot, event.file, event.status);
+      logLine(event.file + (event.detail ? ` — ${event.detail}` : ''), event.status);
+      break;
+    case 'progress':
+      setStats(event.stats);
+      break;
+    case 'error':
+      showBanner(event.detail);
+      finishJob();
+      break;
+    case 'job_done':
+      setStats(event.stats);
+      logLine(event.cancelled ? 'Job cancelled.' : 'Job complete.', event.cancelled ? 'failed' : 'converted');
+      finishJob();
+      break;
+    case 'stream_end':
+      if(evtSource) evtSource.close();
+      break;
+  }
+}
+
+function finishJob(){
+  $('convertBtn').disabled = false;
+  $('cancelBtn').classList.remove('show');
+  currentJobId = null;
+}
+
+init();
+</script>
+</body>
+</html>
