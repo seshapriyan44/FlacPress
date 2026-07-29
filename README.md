@@ -48,7 +48,7 @@ Batch convert your lossless music library to high-quality <b>Opus</b>, <b>MP3</b
 
 ## Screenshot
 
-![alt text](image-1.png)
+![alt text](image.png)
 
 
 ---
