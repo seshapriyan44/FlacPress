@@ -1,199 +1,315 @@
 <p align="center">
-  <img src="static/assets/logo-transparent.png" alt="FlacPress logo" width="180">
+  <img src="static/assets/logo-transparent.png" width="180" alt="FlacPress Logo">
 </p>
 
-# FlacPress
+<h1 align="center">FlacPress</h1>
 
-Batch-convert lossless music (FLAC / WAV / AIFF / APE / ALAC / WavPack) into
-great-sounding lossy formats — Opus, MP3, or AAC — with a small local web UI
-on top of a fast, parallel conversion engine.
+<p align="center">
+Batch convert your lossless music library to high-quality <b>Opus</b>, <b>MP3</b>, or <b>AAC</b> with parallel processing, full metadata preservation, embedded cover art, and a clean local web interface.
+</p>
 
-![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.10%2B-blue)
+<p align="center">
 
-<!-- Swap this for a real screenshot or screen-recording GIF of the UI before publishing -->
-> 🖼️ ![screenshot](image.png)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Python](https://img.shields.io/badge/python-3.10+-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-success)
 
-## Why
+</p>
 
-Most lossless-to-lossy converters are either a one-off shell script or a
-heavyweight GUI app. FlacPress is neither: it's a few hundred lines of Python
-you can actually read, wrapped in a small web UI that shows you what's
-happening while it happens — each parallel worker gets its own live lane, so
-you can watch your library get converted in real time instead of staring at
-a spinner.
-
-## Quick start
-
-```bash
-git clone https://github.com/<you>/flacpress.git
-cd flacpress
-pip install -r requirements.txt
-python app.py
-```
-
-Requires [ffmpeg](https://ffmpeg.org/download.html) on your PATH
-(`ffmpeg -version` should work in a terminal). Then open
-**http://127.0.0.1:5000**, point it at a music folder — or click **Browse**
-to navigate your drives — pick a format, and hit **Start conversion**.
+---
 
 ## Features
 
-- **Opus, MP3 (LAME V0), or AAC** output, all with sensible high-quality
-  defaults you can override per run
-- **Parallel conversion** across as many workers as you want, each shown as
-  its own live lane in the UI
-- **Smart `.m4a` handling** — `.m4a` can hold lossless ALAC or lossy AAC;
-  FlacPress probes the real codec and skips files that are already lossy
-  instead of blindly re-encoding them
-- **Cover art embedded in every format, including Opus** — Ogg containers
-  can't hold a stream-copied image the way MP4/ID3 can, so FlacPress writes
-  a proper `METADATA_BLOCK_PICTURE` tag after encoding instead of dropping
-  the art
-- **Safe by default** — never rescans its own output as new source material,
-  even when the output folder lives inside the source folder
-- **Real cancellation** — stops in-flight ffmpeg processes immediately, not
-  just the queue
-- **Dry-run mode** to preview what would happen before it touches a file
-- **CLI included** (`cli.py`) if you'd rather not use the browser
+- 🎵 Convert **FLAC, WAV, AIFF, ALAC, APE, and WavPack**
+- 🚀 Fast parallel conversion using multiple worker processes
+- 🎨 Preserves embedded album artwork (including **Opus**)
+- 🏷️ Copies metadata using **Mutagen** for maximum compatibility
+- 📁 Mirrors your existing folder structure automatically
+- 🧠 Detects whether `.m4a` files contain **ALAC** or **AAC**
+- 🛑 Real cancellation that immediately terminates running FFmpeg jobs
+- ✅ Output verification with FFprobe
+- 🧪 Dry-run mode
+- 💻 Modern local web UI
+- 🖥️ CLI included for terminal users
 
-## Or just use the terminal
+---
+
+## Supported Formats
+
+| Input | Output |
+|-------|--------|
+| FLAC | Opus |
+| WAV | MP3 |
+| AIFF | AAC |
+| ALAC (.m4a) | |
+| Monkey's Audio (APE) | |
+| WavPack (WV) | |
+
+---
+
+## Screenshot
+
+![alt text](image-1.png)
+
+```text
+docs/images/ui.png
+```
+
+---
+
+# Installation
+
+### Clone the repository
+
+```bash
+git clone https://github.com/seshapriyan44/FlacPress.git
+cd FlacPress
+```
+
+### Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### Install FFmpeg
+
+FlacPress requires **FFmpeg** and **FFprobe**.
+
+Verify the installation:
+
+```bash
+ffmpeg -version
+ffprobe -version
+```
+
+Downloads:
+
+https://ffmpeg.org/download.html
+
+---
+
+## Quick Start
+
+Launch the web application:
+
+```bash
+python app.py
+```
+
+Open
+
+```
+http://127.0.0.1:5000
+```
+
+Choose:
+
+- Source folder
+- Output folder (optional)
+- Output format
+- Bitrate
+- Number of workers
+
+Click **Start Conversion**.
+
+---
+
+# CLI Usage
+
+Convert to Opus:
 
 ```bash
 python cli.py ~/Music --format opus --bitrate 160k --workers 6
+```
+
+Dry run:
+
+```bash
 python cli.py ~/Music --format mp3 --bitrate 0 --dry-run
 ```
 
-*(Windows: `python cli.py D:\Music --format opus`)*
-
-## Package as a desktop app
-
-`desktop.py` runs the Flask server in the background and opens it in a
-native window via [pywebview](https://pywebview.flowrl.com/) — no browser
-tab, no "open localhost:5000" step.
+Windows example:
 
 ```bash
-pip install -r requirements.txt   # pulls in pywebview + pyinstaller too
-python desktop.py                  # try it as a normal window first
+python cli.py D:\Music --format opus
 ```
 
-To build a standalone executable:
+---
+
+# Desktop Version
+
+FlacPress can also run as a native desktop application using **PyWebView**.
+
+Run:
 
 ```bash
-pyinstaller --onefile --windowed --name FlacPress --icon static/assets/icon.ico ^
-  --add-data "static;static" desktop.py
+python desktop.py
 ```
 
-*(on Mac/Linux, use `--add-data "static:static"` — colon, not semicolon)*
+Build an executable:
 
-The result lands in `dist/FlacPress.exe` (or `dist/FlacPress` on Mac/Linux).
-**ffmpeg and ffprobe are not bundled automatically** — PyInstaller only
-packages Python code. Drop `ffmpeg.exe` and `ffprobe.exe` in the same
-folder as the built executable (FlacPress will pick them up via `shutil.which`
-if they're on PATH, or you can point `core.FFMPEG` / `core.FFPROBE` at
-bundled copies before building). This is normal for ffmpeg-based tools —
-it's what keeps the app itself small instead of a 100MB+ download every
-time you rebuild.
+```bash
+pyinstaller --onefile --windowed ^
+--name FlacPress ^
+--icon static/assets/icon.ico ^
+--add-data "static;static" ^
+desktop.py
+```
 
-## Design notes
+macOS/Linux:
 
-**Destination is yours to pick, and it mirrors your folder structure.**
-Output no longer lives in a flat `OPUS`/`MP3`/`AAC` folder next to the
-source. Choose any destination (defaults to the source folder's parent if
-you leave it blank) and FlacPress mirrors the source's directory layout
-under it — only the leaf folder that directly contains the audio files
-(the album folder) gets the format name appended to its name, e.g.
-`Some Album` → `Some Album OPUS`. Everything above that — artist folders,
-genre folders, whatever hierarchy you have — is preserved unchanged. See
-`resolve_output_path()` in `core.py` for the exact logic and worked
-examples.
+```bash
+--add-data "static:static"
+```
 
-**All metadata is copied via mutagen, not ffmpeg's `-map_metadata`.**
-This turned out to be unreliable in two independent, confirmed ways: some
-ffmpeg builds' Ogg muxer write *zero* metadata for Opus/Vorbis output —
-not even a hardcoded `-metadata` flag survives — and even where ffmpeg's
-mapping does work, multi-valued fields like a second contributing artist
-get collapsed into a single semicolon-joined string instead of preserved
-as genuinely separate values. `mutagen`'s Easy* interfaces read and write
-both correctly, so they're now the single source of truth for every
-format's tags (title, artist, album, album artist, track/disc number,
-date, genre, composer) — not just Opus's.
+> FFmpeg and FFprobe are **not bundled automatically**. Place them beside the executable or install them system-wide.
 
-**Output never gets rescanned as input.** It's tempting to drop the output
-folder inside the source folder — but `.m4a` is both a common lossless
-container extension and (for the AAC preset) FlacPress's own output
-extension, so a naive recursive scan can find its own previous output and
-try to re-encode it as if it were fresh lossless audio. `scan_files()`
-explicitly excludes the output directory no matter where it lives, so a
-second run — or any AAC run — is always safe to re-run.
+---
 
-**Cover art actually survives Opus conversion now, not just MP3/AAC.**
-Ogg containers have no "attached video stream" the way MP4/ID3 containers
-do, so the usual `-map 0 -c:v copy` trick can't carry art into a `.opus`
-file (this was the original crash — see below). The real Ogg/Vorbis
-convention is different: a FLAC-style Picture block, base64-encoded into a
-`METADATA_BLOCK_PICTURE` tag. FlacPress extracts the source's embedded
-image via ffmpeg, builds that block with `mutagen`, and writes it straight
-into the finished `.opus` file as a small post-processing step. Verified
-end-to-end against a real FLAC with embedded art: the resulting Opus file
-carries the correct MIME type, dimensions, and image bytes, alongside all
-the usual title/artist/album tags. Toggle: "Embed cover art".
+# Why FlacPress?
 
-**Cover-art copy failures no longer take down the whole file.** For MP3/AAC
-(which *can* stream-copy art directly), if that copy ever fails for some
-other reason — corrupt art, an odd embedded image format — the job
-automatically retries once without the video stream instead of failing
-outright, and notes in the log that the art was dropped.
+Most lossless-to-lossy converters are either simple shell scripts or heavyweight desktop applications.
 
-**Smart `.m4a` handling.** `.m4a` is an ambiguous container — it can hold
-lossless ALAC or lossy AAC. FlacPress probes the actual codec with `ffprobe`
-first and skips files that are already lossy AAC (toggle: "Skip
-already-lossy .m4a"), so you're not needlessly transcoding lossy-to-lossy
-and losing quality a second time.
+FlacPress focuses on being:
 
-**Cancellation that actually cancels.** Conversions run via `Popen` with the
-process handle tracked per worker slot, so Cancel terminates in-flight
-ffmpeg processes immediately instead of waiting for the whole batch to
-drain.
+- Lightweight
+- Fast
+- Easy to use
+- Transparent
+- Safe
 
-**Failures aren't silent.** Every failure captures ffmpeg's stderr and
-surfaces it in the log / event stream, so you can see exactly why a file
-didn't convert instead of just seeing "failed."
+Instead of hiding everything behind a progress bar, every worker is displayed live so you can monitor conversions in real time.
 
-**Output verification** rejects zero-byte files immediately and otherwise
-validates every output with `ffprobe` before counting it as done.
+---
 
-**`-nostdin`** is passed to every ffmpeg invocation so it can never hang
-waiting on stdin in an environment where that's attached to something
-unexpected.
+# Design Highlights
 
-**UI-agnostic core.** `core.py` has no knowledge of Flask, tqdm, or anything
-else — it just calls an `on_event` callback with plain dicts. That's what
-lets the same engine drive both the web UI (via Server-Sent Events) and
-`cli.py` (via tqdm), and makes it straightforward to wire up a desktop GUI
-(Tk/Qt) later — just swap the callback.
+### Metadata Preservation
 
-## Notes on format defaults
+Rather than relying on FFmpeg's `-map_metadata`, FlacPress uses **Mutagen** to preserve metadata more reliably across every supported format.
 
-| Format | Default | What it means |
-|---|---|---|
-| Opus | `160k` | Constant target bitrate, VBR mode on — a very strong quality/size ratio |
-| MP3 | `0` | LAME `-q:a 0`, i.e. V0 — the highest-quality VBR MP3 setting |
-| AAC | `192k` | ffmpeg's native AAC encoder at 192kbps |
+---
 
-All are overridable per run from the UI or `--bitrate` on the CLI.
+### Embedded Cover Art
 
-## Files
+Album artwork is preserved for:
+
+- Opus
+- MP3
+- AAC
+
+For Opus, FlacPress writes a proper `METADATA_BLOCK_PICTURE` tag after encoding.
+
+---
+
+### Smart `.m4a` Detection
+
+`.m4a` may contain either:
+
+- ALAC (lossless)
+- AAC (lossy)
+
+FlacPress automatically detects the codec and avoids unnecessary lossy-to-lossy transcoding.
+
+---
+
+### Safe Output Handling
+
+Generated files are never rescanned as input, even when the destination folder is inside the source directory.
+
+---
+
+### Real Cancellation
+
+Cancel immediately terminates active FFmpeg processes instead of waiting for the conversion queue to finish.
+
+---
+
+### Output Verification
+
+Every converted file is verified using FFprobe before being marked as successful.
+
+---
+
+### UI-Independent Engine
+
+The conversion engine is completely independent of the user interface.
+
+The same backend powers:
+
+- Flask Web UI
+- CLI
+- Desktop application
+
+making future interfaces easy to build.
+
+---
+
+# Default Quality Settings
+
+| Format | Default |
+|----------|---------|
+| Opus | 160 kbps |
+| MP3 | LAME V0 |
+| AAC | 192 kbps |
+
+All settings can be overridden from either the UI or CLI.
+
+---
+
+# Project Structure
 
 ```
-flacpress/
-├── core.py           # conversion engine (no UI dependencies)
-├── app.py             # Flask web server + SSE progress stream
-├── cli.py              # terminal front-end
-├── static/index.html   # the web UI
+FlacPress/
+├── app.py
+├── cli.py
+├── desktop.py
+├── core.py
+├── static/
 ├── requirements.txt
 └── LICENSE
 ```
 
-## License
+---
 
-MIT — see [LICENSE](LICENSE).
+# Requirements
+
+- Python 3.10+
+- FFmpeg
+- FFprobe
+
+---
+
+# Roadmap
+
+- [ ] Drag & Drop support
+- [ ] Dark mode
+- [ ] Preset profiles
+- [ ] ReplayGain support
+- [ ] Portable releases
+- [ ] Automatic update checker
+
+---
+
+# Contributing
+
+Pull requests, feature requests, and bug reports are welcome.
+
+If you encounter an issue, please open an issue on GitHub.
+
+---
+
+# Disclaimer
+
+FlacPress **never modifies your original files**.
+
+All converted audio is written to a separate output directory, keeping your source library untouched.
+
+---
+
+# License
+
+Licensed under the MIT License.
+
+See the [LICENSE](LICENSE) file for details.
