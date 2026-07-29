@@ -53,7 +53,30 @@ Batch convert your lossless music library to high-quality <b>Opus</b>, <b>MP3</b
 
 ---
 
-# Installation
+# Download (Windows)
+
+Grab the latest build from the [Releases page](https://github.com/seshapriyan44/FlacPress/releases):
+
+| File | What it is |
+| --- | --- |
+| `FlacPress.exe` | One file. Download, double-click, done. |
+| `FlacPress-portable-windows.zip` | Unzip and run `FlacPress.exe` from the folder. Starts a little faster. |
+
+**FFmpeg is already inside both downloads.** There is nothing else to install.
+
+Two things to expect on first run:
+
+- Windows may show *"Windows protected your PC"* because the build isn't
+  code-signed (signing certificates cost money). Click **More info -> Run
+  anyway**.
+- The single-file version unpacks itself to a temporary folder each time it
+  starts, so give it a few seconds. The portable version skips that step.
+
+Everything below is for running from source or building it yourself.
+
+---
+
+# Installation (from source)
 
 ### Clone the repository
 
@@ -70,7 +93,15 @@ pip install -r requirements.txt
 
 ### Install FFmpeg
 
-FlacPress requires **FFmpeg** and **FFprobe**.
+FlacPress requires **FFmpeg** and **FFprobe**. (Only when running from source —
+the released builds already include them.)
+
+FlacPress looks for them in this order, so any one of these works:
+
+1. bundled inside the build (how the releases ship)
+2. a `bin/` folder next to `FlacPress.exe`, or the two files sitting directly
+   beside it
+3. anywhere on your `PATH`
 
 Verify the installation:
 
@@ -98,6 +129,9 @@ Open
 ```
 http://127.0.0.1:5000
 ```
+
+If port 5000 is already in use, FlacPress picks the next free one and prints the
+address to use instead.
 
 Choose:
 
@@ -143,23 +177,61 @@ Run:
 python desktop.py
 ```
 
-Build an executable:
+---
+
+# Building the Windows app
+
+## The easy way: let GitHub build it
+
+[`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)
+builds the app on a Windows runner on every push. Open the **Actions** tab, pick
+the newest run, and download the `FlacPress-windows` artifact — it contains both
+the single-file exe and the portable zip.
+
+To publish a release, push a tag:
 
 ```bash
-pyinstaller --onefile --windowed ^
---name FlacPress ^
---icon static/assets/icon.ico ^
---add-data "static;static" ^
-desktop.py
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-macOS/Linux:
+The workflow then attaches both downloads to a GitHub Release automatically.
+Before packaging it also converts a generated test file on Windows, so a build
+that breaks the engine fails instead of shipping.
+
+## Building it yourself on Windows
 
 ```bash
---add-data "static:static"
+pip install -r requirements.txt
 ```
 
-> FFmpeg and FFprobe are **not bundled automatically**. Place them beside the executable or install them system-wide.
+Put `ffmpeg.exe` and `ffprobe.exe` in a `bin/` folder to bundle them
+(recommended — otherwise users need ffmpeg installed):
+
+```
+FlacPress/
+└── bin/
+    ├── ffmpeg.exe
+    └── ffprobe.exe
+```
+
+Then build:
+
+```bash
+pyinstaller flacpress.spec
+```
+
+That produces `dist/FlacPress.exe`. For the folder version, which starts faster
+because it doesn't unpack on every launch:
+
+```bash
+set FLACPRESS_ONEFILE=0
+pyinstaller flacpress.spec
+```
+
+[`flacpress.spec`](flacpress.spec) handles the icon, the bundled `static/`
+files, the ffmpeg binaries, and pywebview's platform backend. Building
+`desktop.py` by hand with command-line flags misses some of those.
 
 ---
 
@@ -258,11 +330,15 @@ All settings can be overridden from either the UI or CLI.
 
 ```
 FlacPress/
-├── app.py
-├── cli.py
-├── desktop.py
-├── core.py
+├── app.py                  Flask web UI
+├── cli.py                  terminal front-end
+├── desktop.py              native window (and the PyInstaller entry point)
+├── core.py                 the conversion engine
+├── runtime.py              paths, tool discovery, packaging support
+├── flacpress.spec          PyInstaller build recipe
 ├── static/
+├── bin/                    optional: ffmpeg.exe + ffprobe.exe to bundle
+├── .github/workflows/      Windows build + release automation
 ├── requirements.txt
 └── LICENSE
 ```
@@ -283,7 +359,7 @@ FlacPress/
 - [ ] Dark mode
 - [ ] Preset profiles
 - [ ] ReplayGain support
-- [ ] Portable releases
+- [x] Portable releases
 - [ ] Automatic update checker
 
 ---
@@ -306,6 +382,9 @@ All converted audio is written to a separate output directory, keeping your sour
 
 # License
 
-Licensed under the MIT License.
+FlacPress's own code is licensed under the MIT License. See the
+[LICENSE](LICENSE) file for details.
 
-See the [LICENSE](LICENSE) file for details.
+The released builds also include FFmpeg and other third-party libraries with
+their own terms — including one that affects the licence of the distributed
+`.exe`. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

@@ -38,7 +38,6 @@ import base64
 import json
 import os
 import queue
-import shutil
 import subprocess
 import threading
 import time
@@ -46,6 +45,8 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
+
+from runtime import NO_WINDOW, find_tool
 
 try:
     import mutagen
@@ -114,8 +115,11 @@ FORMAT_PRESETS = {
     },
 }
 
-FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
-FFPROBE = shutil.which("ffprobe") or "ffprobe"
+# Resolved through find_tool() rather than shutil.which() alone: a user who
+# downloads a release has no reason to have ffmpeg on PATH, so the copy
+# shipped inside the build (or dropped next to the .exe) has to win first.
+FFMPEG = find_tool("ffmpeg")
+FFPROBE = find_tool("ffprobe")
 
 
 def _bitrate_option(fmt: str, bitrate_id: Optional[str]) -> dict:
@@ -144,6 +148,7 @@ def check_binaries() -> list[str]:
                 stderr=subprocess.DEVNULL,
                 timeout=10,
                 check=True,
+                **NO_WINDOW,
             )
         except Exception:
             missing.append(name)
@@ -158,7 +163,7 @@ def probe_audio_codec(file: Path) -> Optional[str]:
                 FFPROBE, "-v", "error", "-select_streams", "a:0",
                 "-show_entries", "stream=codec_name", "-of", "json", str(file),
             ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, **NO_WINDOW,
         )
         data = json.loads(result.stdout or b"{}")
         streams = data.get("streams") or []
@@ -175,7 +180,7 @@ def verify_output(file: Path) -> bool:
     try:
         result = subprocess.run(
             [FFPROBE, "-v", "error", str(file)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, **NO_WINDOW,
         )
         return result.returncode == 0
     except Exception:
@@ -317,7 +322,7 @@ def probe_cover_stream(file: Path) -> Optional[dict]:
                 FFPROBE, "-v", "error", "-select_streams", "v:0",
                 "-show_entries", "stream=codec_name,width,height", "-of", "json", str(file),
             ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, **NO_WINDOW,
         )
         data = json.loads(result.stdout or b"{}")
         streams = data.get("streams") or []
@@ -335,7 +340,7 @@ def extract_cover_bytes(file: Path) -> Optional[bytes]:
                 FFMPEG, "-v", "error", "-i", str(file), "-an", "-map", "0:v:0",
                 "-c", "copy", "-f", "image2pipe", "-frames:v", "1", "pipe:1",
             ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, **NO_WINDOW,
         )
         if result.returncode == 0 and result.stdout:
             return result.stdout
@@ -381,6 +386,8 @@ def embed_ogg_cover(dst: Path, src: Path) -> bool:
 class JobConfig:
     source_dir: Path
     destination_dir: Optional[Path] = None  # None => source_dir.parent (sibling of source)
+    # NOTE: paths are normalised in __post_init__ — see the comment there.
+    # Everything downstream assumes source_dir is absolute and resolved.
     output_format: str = "opus"
     bitrate: Optional[str] = None   # bitrate preset id, e.g. "160k" or "v0" — see FORMAT_PRESETS
     workers: int = field(default_factory=lambda: max(1, (os.cpu_count() or 4) - 2))
@@ -389,6 +396,24 @@ class JobConfig:
     verify: bool = True           # ffprobe-validate every output file
     skip_lossy_m4a: bool = True   # skip .m4a sources that are already lossy AAC
     embed_cover_art: bool = True  # for Ogg-based formats, embed art via post-processing
+
+    def __post_init__(self):
+        """Normalise the paths once, here, so nothing downstream has to.
+
+        scan_files() resolves source_dir before walking it, so every path it
+        returns is absolute. _convert_one() then calls
+        src.relative_to(config.source_dir) — which raises ValueError for
+        every single file if config.source_dir is still relative, because an
+        absolute path is never "inside" a relative one. Same for a path
+        containing "~" or a symlink.
+
+        The practical symptom was that `cli.py some/relative/folder` (or a
+        relative path typed into the web UI) failed on every file while the
+        exact same folder given as an absolute path worked fine.
+        """
+        self.source_dir = Path(self.source_dir).expanduser().resolve()
+        if self.destination_dir is not None:
+            self.destination_dir = Path(self.destination_dir).expanduser().resolve()
 
 
 def _build_command(src: Path, dst: Path, audio_args: list[str], include_cover: bool) -> list[str]:
@@ -434,7 +459,8 @@ class ConversionJob:
         self.on_event({"type": event_type, "ts": time.time(), **data})
 
     def _run_ffmpeg(self, slot: int, command: list[str]) -> tuple[int, bytes]:
-        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, **NO_WINDOW)
         with self._lock:
             self._active_procs[slot] = proc
         try:
@@ -528,7 +554,8 @@ class ConversionJob:
         missing = check_binaries()
         if missing:
             self.emit("error", detail=f"Missing required tool(s): {', '.join(missing)}. "
-                                       f"Install ffmpeg and make sure it's on PATH.")
+                                       f"Install ffmpeg and put it on PATH, or place "
+                                       f"ffmpeg and ffprobe next to FlacPress.")
             return
 
         preset = FORMAT_PRESETS[cfg.output_format]
