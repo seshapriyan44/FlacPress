@@ -386,6 +386,8 @@ def embed_ogg_cover(dst: Path, src: Path) -> bool:
 class JobConfig:
     source_dir: Path
     destination_dir: Optional[Path] = None  # None => source_dir.parent (sibling of source)
+    # NOTE: paths are normalised in __post_init__ — see the comment there.
+    # Everything downstream assumes source_dir is absolute and resolved.
     output_format: str = "opus"
     bitrate: Optional[str] = None   # bitrate preset id, e.g. "160k" or "v0" — see FORMAT_PRESETS
     workers: int = field(default_factory=lambda: max(1, (os.cpu_count() or 4) - 2))
@@ -394,6 +396,24 @@ class JobConfig:
     verify: bool = True           # ffprobe-validate every output file
     skip_lossy_m4a: bool = True   # skip .m4a sources that are already lossy AAC
     embed_cover_art: bool = True  # for Ogg-based formats, embed art via post-processing
+
+    def __post_init__(self):
+        """Normalise the paths once, here, so nothing downstream has to.
+
+        scan_files() resolves source_dir before walking it, so every path it
+        returns is absolute. _convert_one() then calls
+        src.relative_to(config.source_dir) — which raises ValueError for
+        every single file if config.source_dir is still relative, because an
+        absolute path is never "inside" a relative one. Same for a path
+        containing "~" or a symlink.
+
+        The practical symptom was that `cli.py some/relative/folder` (or a
+        relative path typed into the web UI) failed on every file while the
+        exact same folder given as an absolute path worked fine.
+        """
+        self.source_dir = Path(self.source_dir).expanduser().resolve()
+        if self.destination_dir is not None:
+            self.destination_dir = Path(self.destination_dir).expanduser().resolve()
 
 
 def _build_command(src: Path, dst: Path, audio_args: list[str], include_cover: bool) -> list[str]:
