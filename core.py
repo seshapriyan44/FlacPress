@@ -48,30 +48,44 @@ from typing import Callable, Optional
 
 from runtime import NO_WINDOW, find_tool
 
-try:
-    import mutagen
-    from mutagen.flac import Picture
-    from mutagen.oggopus import OggOpus
-    from mutagen.easyid3 import EasyID3
-    from mutagen.id3 import ID3NoHeaderError
-    from mutagen.easymp4 import EasyMP4
-    MUTAGEN_AVAILABLE = True
-except ImportError:
-    MUTAGEN_AVAILABLE = False
+# Tags, cover art and synced lyrics live in tagging.py, which knows how each
+# container stores them. That module exists because ffmpeg cannot be trusted
+# with this: some of its Ogg muxers write no metadata at all for Opus/Vorbis
+# output, and even where the mapping does work, multi-valued fields (two
+# contributing artists, say) get flattened into one semicolon-joined string
+# instead of staying distinct values. enrich.py builds on the same layer to
+# fill in whatever a file is missing.
+import enrich
+import providers
+import tagging
+
+MUTAGEN_AVAILABLE = tagging.MUTAGEN_AVAILABLE
 
 # ==========================
 # Format + bitrate presets
 # ==========================
 
-LOSSLESS_EXTENSIONS = {".flac", ".wav", ".aiff", ".aif", ".ape", ".alac", ".m4a", ".wv"}
+LOSSLESS_EXTENSIONS = {
+    ".flac", ".wav", ".wave", ".w64", ".aiff", ".aif", ".aifc", ".ape",
+    ".alac", ".m4a", ".wv", ".tta", ".tak", ".shn", ".caf", ".dsf", ".dff",
+    ".mlp",
+}
+
+# Output formats that don't throw anything away. Kept as a set rather than a
+# flag on each preset so the three original lossy presets stay untouched.
+LOSSLESS_FORMATS = {"flac", "alac", "wav", "aiff"}
+
+
+def is_lossless_output(fmt: str) -> bool:
+    return fmt in LOSSLESS_FORMATS
 
 FORMAT_PRESETS = {
     "opus": {
         "ext": ".opus",
         "base_args": ["-c:a", "libopus", "-vbr", "on"],
         # Ogg has no stream-copy equivalent for cover art (unlike MP4/ID3
-        # containers) — art is embedded as a METADATA_BLOCK_PICTURE tag in
-        # a post-processing step instead. See embed_ogg_cover().
+        # containers) — art goes in as a METADATA_BLOCK_PICTURE tag after
+        # encoding instead. tagging.py does that for every format now.
         "embed_cover": False,
         "ogg_container": True,
         "bitrate_options": [
@@ -113,6 +127,63 @@ FORMAT_PRESETS = {
              "desc": "Archival — near-transparent, larger files"},
         ],
     },
+    # ---------------------------------------------------------------- lossless
+    # These re-package audio without discarding anything, for when the point
+    # is compatibility rather than saving space: ALAC for Apple devices, FLAC
+    # for everything else, WAV/AIFF for editing software and old hardware.
+    # "Quality" here means compression effort or bit depth, never loss, hence
+    # the per-option "args" override instead of a bitrate flag.
+    "flac": {
+        "ext": ".flac",
+        "base_args": ["-c:a", "flac"],
+        "embed_cover": False,
+        "bitrate_options": [
+            {"id": "c5", "args": ["-compression_level", "5"],
+             "label": "Level 5 (default)",
+             "desc": "Lossless — quick to encode, sensible file size",
+             "default": True},
+            {"id": "c8", "args": ["-compression_level", "8"],
+             "label": "Level 8 (smaller)",
+             "desc": "Lossless — noticeably smaller, slower to encode"},
+            {"id": "c12", "args": ["-compression_level", "12"],
+             "label": "Level 12 (smallest)",
+             "desc": "Lossless — smallest FLAC possible, slowest to encode"},
+        ],
+    },
+    "alac": {
+        "ext": ".m4a",
+        "base_args": ["-c:a", "alac"],
+        "embed_cover": False,
+        "bitrate_options": [
+            {"id": "std", "args": [], "label": "Lossless",
+             "desc": "Apple Lossless — for iPhone, iTunes and Apple Music",
+             "default": True},
+        ],
+    },
+    "wav": {
+        "ext": ".wav",
+        "base_args": [],
+        "embed_cover": False,
+        "bitrate_options": [
+            {"id": "s16", "args": ["-c:a", "pcm_s16le"], "label": "16-bit",
+             "desc": "Uncompressed CD quality — universally readable",
+             "default": True},
+            {"id": "s24", "args": ["-c:a", "pcm_s24le"], "label": "24-bit",
+             "desc": "Uncompressed studio depth — very large files"},
+        ],
+    },
+    "aiff": {
+        "ext": ".aiff",
+        "base_args": [],
+        "embed_cover": False,
+        "bitrate_options": [
+            {"id": "s16", "args": ["-c:a", "pcm_s16be"], "label": "16-bit",
+             "desc": "Uncompressed CD quality — the Mac equivalent of WAV",
+             "default": True},
+            {"id": "s24", "args": ["-c:a", "pcm_s24be"], "label": "24-bit",
+             "desc": "Uncompressed studio depth — very large files"},
+        ],
+    },
 }
 
 # Resolved through find_tool() rather than shutil.which() alone: a user who
@@ -134,7 +205,14 @@ def _bitrate_option(fmt: str, bitrate_id: Optional[str]) -> dict:
 def build_audio_args(fmt: str, bitrate_id: Optional[str]) -> tuple[list[str], str]:
     preset = FORMAT_PRESETS[fmt]
     opt = _bitrate_option(fmt, bitrate_id)
-    return [*preset["base_args"], opt["flag"], opt["value"]], preset["ext"]
+    # Lossy presets say flag/value ("-b:a 320k"); lossless ones give a
+    # complete "args" list instead, because what varies is the encoder or the
+    # compression level rather than a bitrate.
+    if "args" in opt:
+        extra = [str(part) for part in opt["args"]]
+    else:
+        extra = [opt["flag"], str(opt["value"])]
+    return [*preset["base_args"], *extra], preset["ext"]
 
 
 def check_binaries() -> list[str]:
@@ -242,144 +320,12 @@ def resolve_output_path(src: Path, source_dir: Path, destination_root: Path, suf
     return (target_dir / src.name).with_suffix(out_ext)
 
 
-# ==========================
-# Metadata — copied via mutagen, not ffmpeg
-# ==========================
-# Verified against a real ffmpeg build: some ffmpeg Ogg muxers silently
-# write zero metadata for Opus/Vorbis output (not even a hardcoded
-# -metadata flag survives), and even where ffmpeg's mapping does work,
-# multi-valued fields like a second contributing artist get flattened
-# into "Artist A;Artist B" as one string instead of two real values.
-# mutagen's Easy* wrappers read/write both correctly across formats, so
-# they're used as the single source of truth for every format's tags —
-# not just Opus's — via mutagen.File(src, easy=True) as the reader.
-
-def copy_tags(dst: Path, src: Path, fmt: str) -> int:
-    """Copies text tags (title, artist, album, album artist, track/disc
-    number, date, genre, composer, ...) from src into dst. Returns the
-    number of fields copied (0 if nothing to copy or mutagen isn't
-    installed). Never raises — a metadata miss shouldn't fail the file."""
-    if not MUTAGEN_AVAILABLE:
-        return 0
-    try:
-        source = mutagen.File(src, easy=True)
-    except Exception:
-        return 0
-    if not source or not source.tags:
-        return 0
-
-    try:
-        if fmt == "opus":
-            target = OggOpus(dst)
-        elif fmt == "mp3":
-            try:
-                target = EasyID3(dst)
-            except ID3NoHeaderError:
-                target = EasyID3()
-        elif fmt == "aac":
-            target = EasyMP4(dst)
-        else:
-            return 0
-    except Exception:
-        return 0
-
-    count = 0
-    for key, value in source.tags.items():
-        if not value:
-            continue
-        try:
-            target[key.upper() if fmt == "opus" else key] = value
-            count += 1
-        except Exception:
-            continue  # this field isn't supported by the target format's tag scheme — skip it
-
-    try:
-        target.save(dst)
-    except Exception:
-        return 0
-    return count
-
-
-# ==========================
-# Cover art for Ogg-based formats (Opus)
-# ==========================
-# Ogg containers have no "attached video stream" the way MP4/ID3 do, so
-# ffmpeg's usual `-map 0 -c:v copy` trick can't carry cover art into a
-# .opus file. The real Ogg/Vorbis convention is a FLAC-style Picture
-# block, base64-encoded into a METADATA_BLOCK_PICTURE tag. mutagen builds
-# that block correctly and writes it straight into the file after
-# encoding.
-
-_MIME_BY_CODEC = {"mjpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "bmp": "image/bmp"}
-
-
-def probe_cover_stream(file: Path) -> Optional[dict]:
-    """Returns {codec_name, width, height} for the embedded cover-art
-    stream (ffmpeg exposes it as an attached_pic video stream), or None."""
-    try:
-        result = subprocess.run(
-            [
-                FFPROBE, "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name,width,height", "-of", "json", str(file),
-            ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, **NO_WINDOW,
-        )
-        data = json.loads(result.stdout or b"{}")
-        streams = data.get("streams") or []
-        return streams[0] if streams else None
-    except Exception:
-        return None
-
-
-def extract_cover_bytes(file: Path) -> Optional[bytes]:
-    """Pulls the embedded cover image out via ffmpeg straight to memory —
-    no temp file needed."""
-    try:
-        result = subprocess.run(
-            [
-                FFMPEG, "-v", "error", "-i", str(file), "-an", "-map", "0:v:0",
-                "-c", "copy", "-f", "image2pipe", "-frames:v", "1", "pipe:1",
-            ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, **NO_WINDOW,
-        )
-        if result.returncode == 0 and result.stdout:
-            return result.stdout
-    except Exception:
-        pass
-    return None
-
-
-def embed_ogg_cover(dst: Path, src: Path) -> bool:
-    """Best-effort: copies src's embedded cover art into an already-encoded
-    Ogg Opus file at dst. Returns True if art was embedded, False if there
-    was nothing to embed or mutagen isn't installed — either way this
-    never raises, since a missing cover shouldn't fail the conversion."""
-    if not MUTAGEN_AVAILABLE:
-        return False
-    stream = probe_cover_stream(src)
-    if not stream:
-        return False
-    mime = _MIME_BY_CODEC.get(stream.get("codec_name"))
-    if not mime:
-        return False
-    image_bytes = extract_cover_bytes(src)
-    if not image_bytes:
-        return False
-    try:
-        pic = Picture()
-        pic.type = 3  # front cover
-        pic.mime = mime
-        pic.data = image_bytes
-        pic.width = stream.get("width") or 0
-        pic.height = stream.get("height") or 0
-        pic.depth = 24
-
-        audio = OggOpus(dst)
-        audio["metadata_block_picture"] = [base64.b64encode(pic.write()).decode("ascii")]
-        audio.save()
-        return True
-    except Exception:
-        return False
+# Metadata, cover art and synced lyrics for the converted file are written by
+# tagging.copy_all(), which covers every container FlacPress can produce:
+# Vorbis comments plus picture blocks for FLAC and Ogg, ID3 frames for MP3,
+# WAV and AIFF, and MP4 atoms for AAC and ALAC. This file used to carry its
+# own per-format tag copier and a separate Ogg cover embedder; both moved into
+# tagging.py so the library fixer in enrich.py could share them.
 
 
 @dataclass
@@ -395,7 +341,16 @@ class JobConfig:
     force: bool = False           # re-convert even if destination already exists
     verify: bool = True           # ffprobe-validate every output file
     skip_lossy_m4a: bool = True   # skip .m4a sources that are already lossy AAC
-    embed_cover_art: bool = True  # for Ogg-based formats, embed art via post-processing
+    embed_cover_art: bool = True  # carry the source's cover art into the output
+
+    # Optionally fill in what the *source* never had, on the converted copy.
+    # Off by default: conversion should be predictable, and looking things up
+    # online is a separate decision from re-encoding. The standalone library
+    # fixer (enrich.EnrichJob) is the same machinery without the conversion.
+    fix_missing_metadata: bool = False
+    fix_missing_art: bool = False
+    fix_missing_lyrics: bool = False
+    online_lookups: bool = True   # applies to the three flags above
 
     def __post_init__(self):
         """Normalise the paths once, here, so nothing downstream has to.
@@ -416,19 +371,23 @@ class JobConfig:
             self.destination_dir = Path(self.destination_dir).expanduser().resolve()
 
 
-def _build_command(src: Path, dst: Path, audio_args: list[str], include_cover: bool) -> list[str]:
-    command = [
+def _build_command(src: Path, dst: Path, audio_args: list[str]) -> list[str]:
+    """ffmpeg handles audio only; tagging.py handles everything else.
+
+    Cover art used to be stream-copied here with "-map 0 -c:v copy", which
+    meant a source image the target container disliked failed the whole
+    encode and needed a retry without it. Mapping only the audio removes
+    that failure mode entirely, and mutagen re-attaches the artwork
+    afterwards — which it has to do for FLAC, Ogg, WAV and AIFF regardless.
+    """
+    return [
         FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
         "-i", str(src),
         *audio_args,
+        "-map", "0:a",
         "-map_metadata", "0",
+        str(dst),
     ]
-    if include_cover:
-        command += ["-map", "0", "-c:v", "copy"]
-    else:
-        command += ["-map", "0:a"]
-    command += [str(dst)]
-    return command
 
 
 class ConversionJob:
@@ -471,7 +430,7 @@ class ConversionJob:
         return proc.returncode, stderr
 
     def _convert_one(self, src: Path, destination_root: Path, audio_args: list[str],
-                      out_ext: str, suffix: str, embed_cover: bool, ogg_container: bool) -> str:
+                      out_ext: str, suffix: str) -> str:
         if self._cancel.is_set():
             return "cancelled"
 
@@ -497,19 +456,8 @@ class ConversionJob:
                 self.emit("file_done", slot=slot, file=str(relative), status="dry")
                 return "dry"
 
-            command = _build_command(src, dst, audio_args, embed_cover)
+            command = _build_command(src, dst, audio_args)
             returncode, stderr = self._run_ffmpeg(slot, command)
-
-            if self._cancel.is_set():
-                dst.unlink(missing_ok=True)
-                return "cancelled"
-
-            fallback_note = ""
-            if returncode != 0 and embed_cover:
-                dst.unlink(missing_ok=True)
-                command = _build_command(src, dst, audio_args, include_cover=False)
-                returncode, stderr = self._run_ffmpeg(slot, command)
-                fallback_note = "cover art dropped (source image incompatible with output container)"
 
             if self._cancel.is_set():
                 dst.unlink(missing_ok=True)
@@ -518,8 +466,7 @@ class ConversionJob:
             if returncode != 0:
                 dst.unlink(missing_ok=True)
                 self.emit("file_done", slot=slot, file=str(relative), status="failed",
-                           detail=(fallback_note + " " if fallback_note else "")
-                                  + stderr.decode(errors="ignore")[-400:].strip())
+                           detail=stderr.decode(errors="ignore")[-400:].strip())
                 return "failed"
 
             if self.config.verify and not verify_output(dst):
@@ -527,21 +474,42 @@ class ConversionJob:
                 self.emit("file_done", slot=slot, file=str(relative), status="failed", detail="verify failed")
                 return "failed"
 
-            # Metadata and (for Ogg) cover art are handled by mutagen after
-            # encoding rather than trusted to ffmpeg's -map_metadata — see
-            # the module docstring for why.
-            copy_tags(dst, src, self.config.output_format)
+            notes = []
 
-            cover_note = ""
-            if ogg_container and self.config.embed_cover_art:
-                if not MUTAGEN_AVAILABLE:
-                    cover_note = "cover art skipped (mutagen not installed)"
-                elif embed_ogg_cover(dst, src):
-                    cover_note = "cover art embedded"
-                # else: no embedded art in source, or embedding failed — silent, not an error
+            # Tags, cover art and lyrics, via mutagen rather than ffmpeg.
+            copied = tagging.copy_all(src, dst,
+                                      include_art=self.config.embed_cover_art,
+                                      include_lyrics=True)
+            if not MUTAGEN_AVAILABLE:
+                notes.append("tags skipped (mutagen not installed)")
+            elif copied.get("error"):
+                notes.append(f"tags: {copied['error']}")
+            elif copied.get("art"):
+                notes.append("cover art embedded")
 
-            detail = " · ".join(d for d in (fallback_note, cover_note) if d) or None
-            self.emit("file_done", slot=slot, file=str(relative), status="converted", detail=detail)
+            # Optionally fill gaps the source itself never had.
+            if (self.config.fix_missing_metadata or self.config.fix_missing_art
+                    or self.config.fix_missing_lyrics):
+                filled = enrich.enrich_file(
+                    dst,
+                    enrich.EnrichConfig(
+                        source_dir=dst.parent,
+                        fix_metadata=self.config.fix_missing_metadata,
+                        fix_art=self.config.fix_missing_art,
+                        fix_lyrics=self.config.fix_missing_lyrics,
+                        use_online=self.config.online_lookups,
+                        dry_run=False,
+                    ),
+                    # Guess from the *source* path: the output folder has the
+                    # format name appended ("Discovery OPUS"), which would
+                    # otherwise be read back as the album title.
+                    name_source=src,
+                )
+                if filled.get("detail"):
+                    notes.append(f"filled in {filled['detail']}")
+
+            self.emit("file_done", slot=slot, file=str(relative), status="converted",
+                       detail=" · ".join(notes) or None)
             return "converted"
         except Exception as exc:
             self.emit("file_done", slot=slot, file=str(relative), status="failed", detail=str(exc))
@@ -558,11 +526,12 @@ class ConversionJob:
                                        f"ffmpeg and ffprobe next to FlacPress.")
             return
 
-        preset = FORMAT_PRESETS[cfg.output_format]
         audio_args, out_ext = build_audio_args(cfg.output_format, cfg.bitrate)
-        embed_cover = preset["embed_cover"]
-        ogg_container = preset.get("ogg_container", False)
         suffix = cfg.output_format.upper()
+
+        if cfg.online_lookups and (cfg.fix_missing_metadata or cfg.fix_missing_art
+                                   or cfg.fix_missing_lyrics):
+            providers.network.reset()
 
         source_dir = cfg.source_dir.resolve()
         destination_root = (cfg.destination_dir or source_dir.parent).resolve()
@@ -578,7 +547,7 @@ class ConversionJob:
         with ThreadPoolExecutor(max_workers=cfg.workers) as executor:
             futures = [
                 executor.submit(self._convert_one, f, destination_root, audio_args,
-                                 out_ext, suffix, embed_cover, ogg_container)
+                                 out_ext, suffix)
                 for f in files
             ]
             for future in as_completed(futures):
