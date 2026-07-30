@@ -136,6 +136,10 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
           body: |
+            Batch-converts a lossless music library to Opus, MP3 or AAC —
+            keeping your tags and album art, mirroring your folder structure,
+            and never touching the originals.
+
             ## Download
 
             | File | What it is |
