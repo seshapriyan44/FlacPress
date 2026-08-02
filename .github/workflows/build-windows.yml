@@ -101,7 +101,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           Move-Item 'dist\FlacPress.exe' 'artifacts\FlacPress.exe'
 
-<<<<<<< HEAD
       - name: Verify the fix-library feature inside the built exe
         shell: pwsh
         run: |
@@ -162,8 +161,6 @@ jobs:
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           }
 
-=======
->>>>>>> aa375041aabf5387bdb65f01e89cb55aa1f0db9f
       - name: Build portable folder version
         shell: pwsh
         env:
