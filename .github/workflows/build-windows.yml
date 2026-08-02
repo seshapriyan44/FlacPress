@@ -1,0 +1,216 @@
+name: Build Windows app
+
+# Every push builds the app and uploads it as a downloadable artifact, so a
+# working .exe is always one click away from the Actions tab. Pushing a tag
+# like v1.0.0 additionally publishes a GitHub Release with the files attached.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: '3.12'
+  # Static ffmpeg build for Windows. Bundling it means users don't have to
+  # install ffmpeg themselves, which is the difference between "download and
+  # run" and "download, then follow four setup steps".
+  FFMPEG_URL: 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # pywebview's Windows backend talks to WinForms/WebView2 through
+          # pythonnet. Installed explicitly so the build never depends on it
+          # arriving as a transitive extra.
+          pip install pythonnet
+
+      - name: Download ffmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "Downloading $env:FFMPEG_URL"
+          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile ffmpeg.zip -UseBasicParsing
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_download -Force
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          foreach ($tool in 'ffmpeg.exe', 'ffprobe.exe') {
+            $found = Get-ChildItem ffmpeg_download -Recurse -Filter $tool |
+                     Select-Object -First 1
+            if (-not $found) { throw "$tool was not found in the download" }
+            Copy-Item $found.FullName (Join-Path 'bin' $tool) -Force
+          }
+          # Keep ffmpeg's own licence text next to the binaries so it can be
+          # shipped with the portable build (see THIRD_PARTY_LICENSES.md).
+          $licence = Get-ChildItem ffmpeg_download -Recurse -Include 'LICENSE*', 'COPYING*' |
+                     Select-Object -First 1
+          if ($licence) { Copy-Item $licence.FullName 'bin\FFMPEG-LICENSE.txt' -Force }
+          Get-ChildItem bin | Select-Object Name, Length
+          & .\bin\ffmpeg.exe -version | Select-Object -First 1
+
+      - name: Verify the engine works on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # ffmpeg must be discovered from bin/ even though it is not on PATH.
+          python -c "import core; missing = core.check_binaries(); assert not missing, missing; print('ffmpeg resolved to', core.FFMPEG)"
+          # Convert a generated tone end to end through the real CLI.
+          New-Item -ItemType Directory -Force -Path testaudio\album | Out-Null
+          & .\bin\ffmpeg.exe -v error -f lavfi -i "sine=frequency=440:duration=2" `
+            -c:a flac -metadata title="CI Tone" -metadata artist="CI" `
+            -y testaudio\album\tone.flac
+          python cli.py testaudio\album --format opus --destination ci_out --workers 2
+          $produced = 'ci_out\album OPUS\tone.opus'
+          if (-not (Test-Path $produced)) {
+            Get-ChildItem ci_out -Recurse | Out-String | Write-Host
+            throw "conversion produced no output"
+          }
+          python -c "import mutagen, sys; f = mutagen.File(r'$produced', easy=True); assert f.get('title') == ['CI Tone'], dict(f); print('tags survived:', dict(f))"
+          Write-Host "engine OK"
+
+      - name: Build single-file FlacPress.exe
+        shell: pwsh
+        env:
+          FLACPRESS_ONEFILE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pyinstaller --noconfirm --clean flacpress.spec
+          if (-not (Test-Path 'dist\FlacPress.exe')) { throw 'FlacPress.exe was not produced' }
+          $size = [math]::Round((Get-Item 'dist\FlacPress.exe').Length / 1MB, 1)
+          Write-Host "FlacPress.exe is $size MB"
+          if ($size -lt 30) { throw "exe is suspiciously small ($size MB) - ffmpeg probably was not bundled" }
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Move-Item 'dist\FlacPress.exe' 'artifacts\FlacPress.exe'
+
+      - name: Verify the fix-library feature inside the built exe
+        shell: pwsh
+        run: |
+          # The previous engine check only proves the CONVERTER works, by
+          # calling core.py directly from an ordinary Python interpreter.
+          # That is not the same claim as "the packaged exe works" — a
+          # module that's missing or broken only once frozen (a stray
+          # dynamic import, a relative-import edge case, anything
+          # PyInstaller's static analysis mis-traces) would pass that check
+          # and still ship broken, because nothing exercises enrich.py /
+          # providers.py / tagging.py inside the actual .exe. This step
+          # launches the real built binary and drives its HTTP API exactly
+          # like the desktop UI does, so a regression here fails the build
+          # instead of reaching a user with no traceback to go on.
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path fixtest\album | Out-Null
+          & .\bin\ffmpeg.exe -v error -f lavfi -i "sine=frequency=440:duration=1" -y fixtest\album\track.flac
+
+          $proc = Start-Process -FilePath (Resolve-Path 'artifacts\FlacPress.exe') -PassThru
+          try {
+            $base = $null
+            for ($i = 0; $i -lt 60 -and -not $base; $i++) {
+              Start-Sleep -Milliseconds 500
+              foreach ($p in 5000..5010) {
+                try {
+                  Invoke-RestMethod -Uri "http://127.0.0.1:$p/api/check" -TimeoutSec 1 | Out-Null
+                  $base = "http://127.0.0.1:$p"
+                  break
+                } catch { }
+              }
+            }
+            if (-not $base) { throw "FlacPress.exe never answered on any of ports 5000-5010" }
+            Write-Host "exe is serving on $base"
+
+            $sourceDir = (Resolve-Path 'fixtest\album').Path
+            $body = @{
+              source_dir = $sourceDir; fix_metadata = $true; fix_art = $false
+              fix_lyrics = $false; use_online = $false; dry_run = $false; workers = 1
+            } | ConvertTo-Json
+            $start = Invoke-RestMethod -Uri "$base/api/fix/start" -Method Post -Body $body -ContentType 'application/json'
+            if (-not $start.job_id) { throw "POST /api/fix/start returned no job_id: $($start | ConvertTo-Json)" }
+
+            $deadline = (Get-Date).AddSeconds(15)
+            $done = $false
+            while ((Get-Date) -lt $deadline -and -not $done) {
+              Start-Sleep -Milliseconds 500
+              $tags = & python -c "from mutagen.flac import FLAC; f = FLAC(r'fixtest\album\track.flac'); print(dict(f.tags))"
+              if ($tags -match 'title') { $done = $true }
+            }
+            Write-Host "tags after fix-library ran inside the exe: $tags"
+            if (-not $done) {
+              throw "The fix-library feature did not write any tags inside the packaged exe " +
+                    "(it works fine called directly from source - see the earlier engine check). " +
+                    "This means something about enrich.py/providers.py/tagging.py is broken " +
+                    "specifically once frozen by PyInstaller."
+            }
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Build portable folder version
+        shell: pwsh
+        env:
+          FLACPRESS_ONEFILE: '0'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pyinstaller --noconfirm --clean flacpress.spec
+          # Confirm the pieces that only exist because of the spec's datas
+          # actually made it into the bundle.
+          foreach ($required in 'dist\FlacPress\FlacPress.exe',
+                                'dist\FlacPress\_internal\static\index.html',
+                                'dist\FlacPress\_internal\bin\ffmpeg.exe',
+                                'dist\FlacPress\_internal\bin\ffprobe.exe') {
+            if (-not (Test-Path $required)) { throw "missing from the build: $required" }
+            Write-Host "found $required"
+          }
+          Copy-Item 'README.md', 'LICENSE', 'THIRD_PARTY_LICENSES.md' 'dist\FlacPress\' -Force
+          Compress-Archive -Path 'dist\FlacPress\*' `
+            -DestinationPath 'artifacts\FlacPress-portable-windows.zip' -Force
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlacPress-windows
+          path: artifacts/*
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            Batch-converts a lossless music library to Opus, MP3 or AAC —
+            keeping your tags and album art, mirroring your folder structure,
+            and never touching the originals.
+
+            ## Download
+
+            | File | What it is |
+            | --- | --- |
+            | `FlacPress.exe` | One file. Download, double-click, done. |
+            | `FlacPress-portable-windows.zip` | Unzip and run `FlacPress.exe` from the folder. Starts a little faster. |
+
+            ffmpeg is already included in both — nothing else to install.
+
+            Windows may warn about an unrecognised app on first run because the
+            build isn't code-signed. Choose **More info -> Run anyway**.
+
+            Includes ffmpeg, licensed under the GPL. See
+            [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

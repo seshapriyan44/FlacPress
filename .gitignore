@@ -1,3 +1,7 @@
+# Bundled ffmpeg/ffprobe for local builds — fetched by the build workflow,
+# far too big to commit (~80 MB each)
+/bin/
+
 # Python
 __pycache__/
 *.py[cod]
