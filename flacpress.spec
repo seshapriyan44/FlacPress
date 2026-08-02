@@ -25,11 +25,9 @@ import os
 import sys
 from pathlib import Path
 
-<<<<<<< HEAD
+
 from PyInstaller.utils.hooks import collect_submodules
 
-=======
->>>>>>> aa375041aabf5387bdb65f01e89cb55aa1f0db9f
 ROOT = Path(SPECPATH).resolve()
 ONEFILE = os.environ.get("FLACPRESS_ONEFILE", "1") != "0"
 EXE_SUFFIX = ".exe" if sys.platform == "win32" else ""
@@ -65,7 +63,6 @@ elif sys.platform == "darwin":
 else:
     hiddenimports += ["webview.platforms.gtk", "webview.platforms.qt"]
 
-<<<<<<< HEAD
 # tagging.py's mutagen.File(path) auto-detects the container by trying every
 # format mutagen supports, not just the ones this project's own code imports
 # by name (FLAC/MP3/MP4/AIFF/WAVE/OggOpus/OggVorbis). mutagen's own __init__
@@ -85,8 +82,6 @@ hiddenimports += collect_submodules("mutagen")
 # stops working. Listed explicitly until such a check exists.
 hiddenimports += ["core", "app", "enrich", "providers", "tagging", "runtime"]
 
-=======
->>>>>>> aa375041aabf5387bdb65f01e89cb55aa1f0db9f
 icon_path = ROOT / "static" / "assets" / "icon.ico"
 
 a = Analysis(
