@@ -23,7 +23,7 @@ import providers
 from core import (
     ConversionJob, FORMAT_PRESETS, JobConfig, check_binaries, is_lossless_output,
 )
-from enrich import EnrichConfig, EnrichJob
+from enrich import EnrichConfig, EnrichJob, FIXABLE_EXTENSIONS
 from runtime import free_port, resource_path
 
 # static_folder has to be an absolute path. Flask normally works it out
@@ -95,14 +95,17 @@ def api_browse():
     if not p.exists() or not p.is_dir():
         return jsonify({"error": "Not a directory"}), 400
     try:
-        dirs = sorted(
-            (c.name for c in p.iterdir() if c.is_dir() and not c.name.startswith(".")),
-            key=str.lower,
-        )
+        entries = sorted(p.iterdir(), key=lambda c: c.name.lower())
     except PermissionError:
         return jsonify({"error": "Permission denied"}), 403
+    dirs = [c.name for c in entries if c.is_dir() and not c.name.startswith(".")]
+    # FIXABLE_EXTENSIONS (every format the app can read or write, lossy
+    # included) rather than just LOSSLESS_EXTENSIONS, so the browser is
+    # useful for picking files in either the converter or the library fixer.
+    files = [c.name for c in entries
+             if c.is_file() and c.suffix.lower() in FIXABLE_EXTENSIONS]
     parent = str(p.parent) if p.parent != p else None
-    return jsonify({"path": str(p), "parent": parent, "dirs": dirs})
+    return jsonify({"path": str(p), "parent": parent, "dirs": dirs, "files": files})
 
 
 @app.route("/api/start", methods=["POST"])
@@ -132,6 +135,10 @@ def api_start():
     except (TypeError, ValueError):
         return jsonify({"error": "workers must be an integer"}), 400
 
+    source_files = data.get("source_files") or None
+    if source_files is not None and not isinstance(source_files, list):
+        return jsonify({"error": "source_files must be a list of filenames"}), 400
+
     cfg = JobConfig(
         source_dir=source_dir,
         destination_dir=destination_dir,
@@ -147,6 +154,7 @@ def api_start():
         fix_missing_art=bool(data.get("fix_missing_art", False)),
         fix_missing_lyrics=bool(data.get("fix_missing_lyrics", False)),
         online_lookups=bool(data.get("online_lookups", True)),
+        only_files=source_files,
     )
 
     job_id = _launch(lambda emit: ConversionJob(cfg, on_event=emit))
@@ -184,6 +192,10 @@ def api_fix_start():
     if not (fix_metadata or fix_art or fix_lyrics):
         return jsonify({"error": "Pick at least one thing to fix"}), 400
 
+    source_files = data.get("source_files") or None
+    if source_files is not None and not isinstance(source_files, list):
+        return jsonify({"error": "source_files must be a list of filenames"}), 400
+
     cfg = EnrichConfig(
         source_dir=source_dir,
         fix_metadata=fix_metadata,
@@ -197,6 +209,7 @@ def api_fix_start():
         recursive=bool(data.get("recursive", True)),
         workers=workers,
         dry_run=bool(data.get("dry_run", True)),
+        only_files=source_files,
     )
 
     job_id = _launch(lambda emit: EnrichJob(cfg, on_event=emit))

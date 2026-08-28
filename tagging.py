@@ -27,7 +27,7 @@ try:
     from mutagen.aiff import AIFF
     from mutagen.flac import FLAC, Picture
     from mutagen.id3 import (
-        APIC, ID3, TALB, TCON, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, USLT,
+        APIC, ID3, TALB, TCON, TCOP, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, USLT,
     )
     from mutagen.mp3 import MP3
     from mutagen.mp4 import MP4, MP4Cover
@@ -40,13 +40,18 @@ except ImportError:  # pragma: no cover - mutagen is a hard requirement in pract
 
 # Fields FlacPress understands. Order matters only for display.
 FIELDS = ("title", "artist", "albumartist", "album", "tracknumber",
-          "tracktotal", "discnumber", "date", "genre")
+          "tracktotal", "discnumber", "date", "genre", "copyright")
 
-# Fields whose absence counts as "this file needs fixing". tracktotal and
-# discnumber are deliberately excluded: plenty of correctly tagged singles
-# and single-disc albums simply don't have them.
+# Fields whose absence counts as "this file needs fixing". tracktotal is
+# deliberately excluded: plenty of correctly tagged singles and
+# single-disc albums simply don't have a track total, and there's no
+# reliable way to source one that a file doesn't already have. disc
+# number and copyright ARE checked, at the user's request - a missing
+# disc number is common on singles and is safe to leave as "1" implicitly
+# when found, and copyright is sourced from MusicBrainz label data (see
+# providers.find_copyright) rather than guessed.
 CORE_FIELDS = ("title", "artist", "album", "albumartist", "tracknumber",
-               "date", "genre")
+               "discnumber", "date", "genre", "copyright")
 
 
 def _first(value: Any) -> str:
@@ -146,6 +151,7 @@ class _VorbisAdapter(_Adapter):
         "tracktotal": ("TRACKTOTAL", "TOTALTRACKS"),
         "discnumber": ("DISCNUMBER", "DISC"),
         "date": ("DATE", "YEAR", "ORIGINALDATE"), "genre": ("GENRE",),
+        "copyright": ("COPYRIGHT",),
     }
     LYRIC_KEYS = ("LYRICS", "UNSYNCEDLYRICS", "SYNCEDLYRICS", "LYRICS:DESCRIPTION")
 
@@ -223,10 +229,11 @@ class _ID3Adapter(_Adapter):
     FRAMES = {
         "title": "TIT2", "artist": "TPE1", "albumartist": "TPE2",
         "album": "TALB", "discnumber": "TPOS", "date": "TDRC", "genre": "TCON",
+        "copyright": "TCOP",
     }
     BUILDERS = {
         "TIT2": TIT2, "TPE1": TPE1, "TPE2": TPE2, "TALB": TALB,
-        "TPOS": TPOS, "TDRC": TDRC, "TCON": TCON,
+        "TPOS": TPOS, "TDRC": TDRC, "TCON": TCON, "TCOP": TCOP,
     }
 
     def __init__(self, audio, path: Path):
@@ -333,6 +340,7 @@ class _MP4Adapter(_Adapter):
     ATOMS = {
         "title": "\xa9nam", "artist": "\xa9ART", "albumartist": "aART",
         "album": "\xa9alb", "date": "\xa9day", "genre": "\xa9gen",
+        "copyright": "cprt",
     }
 
     def fields(self) -> Dict[str, str]:

@@ -204,10 +204,30 @@ def find_local_cover(folder: Path) -> tuple[Optional[bytes], str]:
 
 
 def scan_fixable(source_dir: Path, recursive: bool = True,
-                 extensions=FIXABLE_EXTENSIONS) -> List[Path]:
+                 extensions=FIXABLE_EXTENSIONS, only_files: Optional[List] = None) -> List[Path]:
     root = Path(source_dir).expanduser().resolve()
     if not root.is_dir():
         return []
+
+    if only_files is not None:
+        chosen = []
+        for raw in only_files:
+            candidate = Path(raw)
+            if not candidate.is_absolute():
+                candidate = root / candidate
+            try:
+                candidate = candidate.resolve()
+            except OSError:
+                continue
+            if not candidate.is_file() or candidate.suffix.lower() not in extensions:
+                continue
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                continue
+            chosen.append(candidate)
+        return sorted(chosen)
+
     walker = root.rglob("*") if recursive else root.glob("*")
     found = []
     for path in walker:
@@ -234,6 +254,7 @@ class EnrichConfig:
     workers: int = field(default_factory=lambda: max(1, min(4, (os.cpu_count() or 4) - 2)))
     dry_run: bool = True          # preview unless the caller says otherwise
     overwrite_existing: bool = False   # off by default, and it should stay off
+    only_files: Optional[List] = None  # specific files instead of the whole folder — see scan_fixable
 
     def __post_init__(self):
         # Same normalisation trap as JobConfig: scan results are absolute,
@@ -288,6 +309,20 @@ def build_plan(path: Path, state: Dict[str, Any], config: EnrichConfig,
         if facts:
             online = facts.fields
             plan["sources"].append(f"{facts.source} ({facts.confidence:.2f})")
+
+    # Copyright has no home in the iTunes/Deezer track-search responses
+    # above, so it's sourced separately from MusicBrainz label data - only
+    # bothered with if it's actually missing, since that lookup costs its
+    # own request.
+    if (cfg.fix_metadata and "copyright" in missing and cfg.use_online
+            and not online.get("copyright")):
+        lookup_album = album or online.get("album", "")
+        lookup_artist = artist or online.get("artist", "")
+        if lookup_artist and lookup_album:
+            found = providers.find_copyright(lookup_artist, lookup_album)
+            if found:
+                online["copyright"] = found
+                plan["sources"].append("MusicBrainz")
 
     if cfg.fix_metadata:
         for name in missing:
@@ -502,7 +537,7 @@ class EnrichJob:
         if cfg.use_online:
             providers.network.reset()
 
-        files = scan_fixable(cfg.source_dir, cfg.recursive)
+        files = scan_fixable(cfg.source_dir, cfg.recursive, only_files=cfg.only_files)
         self.stats["total"] = len(files)
         self.emit("scan_done", total=len(files), output_dir=str(cfg.source_dir),
                   dry_run=cfg.dry_run)

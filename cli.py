@@ -88,6 +88,10 @@ def main():
                               "s16/s24 for wav and aiff. Omit for the "
                               "recommended default.")
     parser.add_argument("--workers", type=int, default=None)
+    parser.add_argument("--files", nargs="+", default=None, metavar="FILE",
+                         help="Only these specific files, instead of everything "
+                              "under `source` — paths relative to `source`, or "
+                              "absolute. e.g. --files \"01 - Track.flac\" \"03 - Track.flac\"")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true", help="Re-convert even if output already exists")
     parser.add_argument("--no-verify", action="store_true", help="Skip ffprobe verification of outputs")
@@ -138,6 +142,7 @@ def main():
             lrc_sidecar=args.lrc_sidecar,
             workers=args.workers or max(1, min(4, (os.cpu_count() or 4) - 2)),
             dry_run=not args.apply,
+            only_files=args.files,
         )
         if cfg.dry_run:
             print("Preview only - nothing will be written. Add --apply to commit.")
@@ -158,6 +163,7 @@ def main():
         fix_missing_art=fix_art,
         fix_missing_lyrics=fix_lyrics,
         online_lookups=not args.offline,
+        only_files=args.files,
     )
 
     run_job(lambda emit: ConversionJob(cfg, on_event=emit))

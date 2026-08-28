@@ -184,15 +184,70 @@ def simplify(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
-def similarity(left: str, right: str) -> float:
+def _similarity_core(left: str, right: str) -> float:
     a, b = simplify(left), simplify(right)
     if not a or not b:
         return 0.0
     if a == b:
         return 1.0
     if a in b or b in a:
-        return 0.92
+        # One string containing the other is a strong signal ONLY when the
+        # shorter one is a substantial fraction of the longer one's length.
+        # Without a length check here, a generic short word ("Silence")
+        # counts as a near-perfect match against any longer title that
+        # happens to contain it ("Sound of Silence" — a different album by
+        # a different artist entirely), which is exactly the kind of
+        # false-positive that shipped wrong cover art. SequenceMatcher's
+        # own ratio() isn't a safe fallback either — it naturally scores a
+        # short substring embedded in a long string as fairly similar too,
+        # for the same reason — so the containment case is scored purely
+        # from length coverage instead of deferring to it.
+        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+        coverage = len(shorter) / len(longer)
+        if coverage >= 0.6:
+            return 0.92
+        return 0.3 + 0.35 * coverage   # e.g. "Silence" in "Sound of Silence" (~0.41 coverage) -> ~0.44
     return SequenceMatcher(None, a, b).ratio()
+
+
+def similarity(left: str, right: str) -> float:
+    best = _similarity_core(left, right)
+    # Segued/medley tracks are commonly catalogued as "X / Y" ("House Of
+    # Balloons / Glass Table Girls") while a file's own tag usually just
+    # has "X". That's a real, common pattern for this kind of tagging, and
+    # without checking it separately it scores the same as an unrelated
+    # long title happening to start with a short common word — exactly
+    # the ambiguity the length-coverage rule above exists to reject. So
+    # it's checked explicitly instead of by loosening that rule generally,
+    # which would let the original false-positive back in.
+    for text, other in ((left, right), (right, left)):
+        if "/" in text:
+            first_part = text.split("/", 1)[0].strip()
+            if first_part and first_part.lower() != text.lower():
+                best = max(best, _similarity_core(first_part, other))
+    return best
+
+
+def gated_score(*components: tuple[float, float, float]) -> float:
+    """Combines (similarity, weight, floor) components into a weighted
+    score — but only if EVERY component clears its own floor first.
+
+    This exists because a plain weighted average lets a near-perfect
+    match on one axis paper over a bad match on another. That's a real
+    problem specifically for artist name, which is weighted highest but
+    carries almost no discriminating power for a library that's mostly
+    one artist: every candidate scores ~1.0 on it, which alone was
+    enough to clear the old 0.72 threshold even when the album-title
+    component was a weak, essentially-coincidental word overlap. Gating
+    each axis independently means a wrong album title can no longer be
+    rescued by a correct artist name, or vice versa.
+    """
+    total = 0.0
+    for sim, weight, floor in components:
+        if sim < floor:
+            return 0.0
+        total += sim * weight
+    return total
 
 
 # ---------------------------------------------------------------- cover art
@@ -248,11 +303,23 @@ def _itunes_art(artist: str, album: str, size: int) -> Optional[Artwork]:
     best = None
     best_score = 0.0
     for result in data.get("results", []):
-        score = (similarity(artist, result.get("artistName", "")) * 0.4
-                 + similarity(album, result.get("collectionName", "")) * 0.6)
+        # Artist gets at least as much weight as album on purpose: album
+        # titles are often short, common words ("Silence", "Echoes",
+        # "Nights") that fuzzy-match plenty of wrong records, while an
+        # artist name mismatch is the clearest signal something's wrong.
+        # Both axes are gated independently (see gated_score) so a
+        # near-perfect artist match — which is nearly guaranteed for a
+        # library that's mostly one artist — can't rescue a wrong album.
+        score = gated_score(
+            (similarity(artist, result.get("artistName", "")), 0.55, 0.5),
+            (similarity(album, result.get("collectionName", "")), 0.45, 0.5),
+        )
         if score > best_score:
             best, best_score = result, score
-    if not best or best_score < 0.55:
+    # Cover art is far more visible/embarrassing than a wrong genre tag if
+    # it's wrong, so this threshold is deliberately stricter than the 0.6-0.62
+    # used for metadata and lyrics matching.
+    if not best or best_score < 0.72:
         return None
     thumb = best.get("artworkUrl100") or ""
     if not thumb:
@@ -265,22 +332,60 @@ def _itunes_art(artist: str, album: str, size: int) -> Optional[Artwork]:
     return None
 
 
+def _itunes_track_art(artist: str, title: str) -> Optional[Artwork]:
+    """Track-level fallback, mirroring _deezer_track_art: for releases
+    that don't exist as a clean album match (mixtapes, singles folded
+    into a later compilation, etc.) but do exist as an individual track -
+    "House of Balloons" is exactly this case, since it started life as a
+    free mixtape rather than a commercially catalogued album."""
+    if not title:
+        return None
+    query = urllib.parse.urlencode({
+        "term": f"{artist} {title}".strip(), "entity": "song", "limit": 10})
+    data = _get_json(f"https://itunes.apple.com/search?{query}")
+    if not isinstance(data, dict):
+        return None
+    best, best_score = None, 0.0
+    for result in data.get("results", []):
+        score = gated_score(
+            (similarity(artist, result.get("artistName", "")), 0.5, 0.5),
+            (similarity(title, result.get("trackName", "")), 0.5, 0.5),
+        )
+        if score > best_score:
+            best, best_score = result, score
+    if not best or best_score < 0.72:
+        return None
+    thumb = best.get("artworkUrl100") or ""
+    if not thumb:
+        return None
+    for candidate in ("1000x1000bb", "600x600bb"):
+        art = _download_image(thumb.replace("100x100bb", candidate), "iTunes")
+        if art:
+            return art
+    return None
+
+
 def _deezer_art(artist: str, album: str) -> Optional[Artwork]:
     # Deezer's advanced query syntax returns nothing here; plain text works.
     query = urllib.parse.urlencode({"q": f"{artist} {album}".strip(), "limit": 5})
     data = _get_json(f"https://api.deezer.com/search/album?{query}")
     if not isinstance(data, dict):
         return None
+    best, best_score = None, 0.0
     for result in data.get("data", []):
-        score = (similarity(artist, (result.get("artist") or {}).get("name", "")) * 0.4
-                 + similarity(album, result.get("title", "")) * 0.6)
-        if score < 0.55:
-            continue
-        for key in ("cover_xl", "cover_big", "cover_medium"):
-            if result.get(key):
-                art = _download_image(result[key], "Deezer")
-                if art:
-                    return art
+        score = gated_score(
+            (similarity(artist, (result.get("artist") or {}).get("name", "")), 0.55, 0.5),
+            (similarity(album, result.get("title", "")), 0.45, 0.5),
+        )
+        if score > best_score:
+            best, best_score = result, score
+    if not best or best_score < 0.72:
+        return None
+    for key in ("cover_xl", "cover_big", "cover_medium"):
+        if best.get(key):
+            art = _download_image(best[key], "Deezer")
+            if art:
+                return art
     return None
 
 
@@ -334,20 +439,28 @@ def _deezer_track_art(artist: str, title: str) -> Optional[Artwork]:
     data = _get_json(f"https://api.deezer.com/search/track?{query}")
     if not isinstance(data, dict):
         return None
+    best, best_score = None, 0.0
     for result in data.get("data", []):
-        score = similarity(title, result.get("title", "")) * 0.6
-        if artist:
-            score += similarity(artist, (result.get("artist") or {}).get("name", "")) * 0.4
-        else:
-            score += 0.2
-        if score < 0.6:
+        title_sim = similarity(title, result.get("title", ""))
+        if title_sim < 0.5:
             continue
-        album = result.get("album") or {}
-        for key in ("cover_xl", "cover_big", "cover_medium"):
-            if album.get(key):
-                art = _download_image(album[key], "Deezer")
-                if art:
-                    return art
+        if artist:
+            artist_sim = similarity(artist, (result.get("artist") or {}).get("name", ""))
+            if artist_sim < 0.5:
+                continue
+            score = title_sim * 0.5 + artist_sim * 0.5
+        else:
+            score = title_sim * 0.5 + 0.15
+        if score > best_score:
+            best, best_score = result, score
+    if not best or best_score < 0.72:
+        return None
+    album = best.get("album") or {}
+    for key in ("cover_xl", "cover_big", "cover_medium"):
+        if album.get(key):
+            art = _download_image(album[key], "Deezer")
+            if art:
+                return art
     return None
 
 
@@ -376,7 +489,12 @@ def find_cover_art(artist: str, album: str, size: int = 1000,
                     lambda: _deezer_art(artist, album),
                     lambda: _coverart_archive(artist, album)]
     if title:
-        lookups.append(lambda: _deezer_track_art(artist, title))
+        # Track-level fallback for releases that don't exist as a clean
+        # album match - mixtapes (House of Balloons started life as a free
+        # mixtape, not a catalogued album), tracks folded into a later
+        # compilation under a different collection name, etc.
+        lookups += [lambda: _itunes_track_art(artist, title),
+                    lambda: _deezer_track_art(artist, title)]
 
     art = None
     for lookup in lookups:
@@ -482,9 +600,15 @@ def find_track_metadata(artist: str, title: str, album: str = "",
 
     best, best_score = None, 0.0
     for result in data.get("results", []):
-        score = similarity(title, result.get("trackName", "")) * 0.55
+        title_sim = similarity(title, result.get("trackName", ""))
+        if title_sim < 0.5:
+            continue
+        score = title_sim * 0.55
         if artist:
-            score += similarity(artist, result.get("artistName", "")) * 0.3
+            artist_sim = similarity(artist, result.get("artistName", ""))
+            if artist_sim < 0.5:
+                continue
+            score += artist_sim * 0.3
         else:
             score += 0.15
         if album:
@@ -534,3 +658,47 @@ def status() -> Dict[str, Any]:
         "reason": network.reason,
         "art_cached": len(_art_cache),
     }
+
+
+# ---------------------------------------------------------------- copyright
+
+_copyright_cache: Dict[str, Optional[str]] = {}
+_copyright_lock = threading.Lock()
+
+
+def find_copyright(artist: str, album: str) -> Optional[str]:
+    """Looks up a phonogram copyright line from MusicBrainz's release/label
+    data, formatted the conventional way: "(P) {year} {label}". There's
+    no second source for this one - iTunes and Deezer's public APIs don't
+    expose it - so a release MusicBrainz doesn't know the label for (common
+    for smaller or self-released records) just comes back as None."""
+    artist, album = (artist or "").strip(), (album or "").strip()
+    if not artist or not album:
+        return None
+    key = f"{simplify(artist)}|{simplify(album)}"
+    with _copyright_lock:
+        if key in _copyright_cache:
+            return _copyright_cache[key]
+
+    result = None
+    query = urllib.parse.urlencode({
+        "query": f'artist:"{artist}" AND release:"{album}"',
+        "fmt": "json", "limit": 3, "inc": "labels"})
+    data = _get_json(f"https://musicbrainz.org/ws/2/release/?{query}")
+    if isinstance(data, dict):
+        for release in data.get("releases", [])[:3]:
+            label_name = ""
+            for info in release.get("label-info") or []:
+                label = info.get("label") or {}
+                if label.get("name"):
+                    label_name = label["name"]
+                    break
+            if not label_name:
+                continue
+            year = (release.get("date") or "")[:4]
+            result = f"\u2117 {year} {label_name}" if year.isdigit() else f"\u2117 {label_name}"
+            break
+
+    with _copyright_lock:
+        _copyright_cache[key] = result
+    return result

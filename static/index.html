@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
 <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
     /* Black + red, matched to the FlacPress logo (sampled: heart red ~#af362e). */
@@ -53,22 +53,29 @@
   header{
     display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;
     padding:18px 20px;border-radius:var(--radius-lg);
-    /* glow is contained to the header box itself, not the viewport, so it can never create a seam elsewhere on the page */
-    background:radial-gradient(420px 160px at 8% 30%, rgba(224,69,61,0.16), transparent 70%), var(--surface-1);
+    /* glow sits behind the wordmark, not the logo icon — a red glow directly
+       behind a red heart was exactly why the heart used to disappear */
+    background:radial-gradient(420px 160px at 38% 45%, rgba(224,69,61,0.14), transparent 70%), var(--surface-1);
     border:1px solid var(--outline);
   }
-  .brand{display:flex;align-items:center;gap:14px;}
-  .brand-logo{height:52px;width:auto;display:block;filter:drop-shadow(0 2px 10px rgba(224,69,61,0.35));}
+  .brand{display:flex;align-items:center;gap:16px;}
+  .logo-badge{
+    flex:0 0 auto;width:60px;height:60px;border-radius:16px;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #1a1010, #060404 75%);
+    border:1px solid var(--outline);
+  }
+  .brand-logo{height:44px;width:auto;display:block;filter:drop-shadow(0 1px 0 rgba(0,0,0,0.6)) drop-shadow(0 0 6px rgba(224,69,61,0.25));}
   .brand h1{
-    font-family:'Manrope',sans-serif;
-    font-weight:800;
-    font-size:28px;
-    letter-spacing:0.2px;
+    font-family:'Anton',sans-serif;
+    font-weight:400;
+    font-size:32px;
+    letter-spacing:0.5px;
     margin:0;
     color:var(--text);
+    text-transform:uppercase;
   }
   .brand h1 span{color:var(--primary);}
-  .brand p{margin:3px 0 0;color:var(--text-muted);font-size:13.5px;}
+  .brand p{margin:4px 0 0;color:var(--text-muted);font-size:13.5px;}
   .status-pill{
     font-family:'JetBrains Mono',monospace;
     font-size:12px;
@@ -145,6 +152,14 @@
   .browse-btn:hover{background:#4a1a16;}
 
   .hint{font-size:11.5px;color:var(--text-muted);margin-top:6px;line-height:1.4;}
+  .hint.collapsible{display:none;}
+  .hint.collapsible.show{display:block;}
+  .source-mode-row{margin-top:8px;margin-bottom:18px;}
+  .link-btn{
+    background:none;border:none;padding:0;cursor:pointer;
+    font-size:12px;color:var(--primary);text-decoration:underline;text-underline-offset:2px;
+  }
+  .link-btn:hover{color:#ff6b62;}
 
   .bitrate-desc{
     font-size:12px;color:var(--text-muted);margin-top:7px;line-height:1.45;
@@ -266,6 +281,9 @@
   .modal-item:hover{background:var(--surface-2);}
   .modal-item.up{color:var(--text-muted);}
   .modal-item.drive{color:var(--on-primary-container);}
+  .modal-item.file{cursor:default;}
+  .modal-item.file input[type=checkbox]{width:16px;height:16px;flex:0 0 auto;accent-color:var(--primary);cursor:pointer;}
+  .modal-item.file label{display:flex;align-items:center;gap:9px;cursor:pointer;margin:0;flex:1;font-size:13.5px;color:var(--text);}
   .modal-foot{padding:14px 18px;border-top:1px solid var(--outline);display:flex;gap:10px;justify-content:flex-end;}
   .btn-secondary{background:transparent;border:1px solid var(--outline-strong);color:var(--text-muted);border-radius:999px;padding:9px 16px;cursor:pointer;font-size:13px;font-weight:600;}
   .btn-primary{background:var(--primary);border:none;color:#fff;font-weight:700;border-radius:999px;padding:9px 18px;cursor:pointer;font-size:13px;}
@@ -287,7 +305,7 @@
 
   <header>
     <div class="brand">
-      <img src="assets/logo-transparent.png" alt="FlacPress" class="brand-logo" />
+      <div class="logo-badge"><img src="assets/logo-transparent.png" alt="FlacPress" class="brand-logo" /></div>
       <div>
         <h1>FLAC<span>PRESS</span></h1>
         <p>Local batch audio converter &amp; library fixer — convert, or fill in missing tags, art and lyrics</p>
@@ -312,12 +330,16 @@
         <input type="text" id="sourceInput" placeholder="e.g. D:\Music" />
         <button class="browse-btn" id="browseSourceBtn" type="button">Browse</button>
       </div>
+      <div class="source-mode-row">
+        <button class="link-btn" id="pickFilesBtn" type="button">Select specific files instead of a whole folder →</button>
+      </div>
+      <div class="hint collapsible" id="sourceFilesHint"></div>
 
       <div id="convertOnly">
 
       <label for="destInput">Destination folder</label>
       <div class="row">
-        <input type="text" id="destInput" placeholder="leave blank for source's parent folder" />
+        <input type="text" id="destInput" placeholder="optional" />
         <button class="browse-btn" id="browseDestBtn" type="button">Browse</button>
       </div>
       <div class="hint" id="destHint">Mirrors the source's folder structure; only the album folder gets " FORMAT" appended to its name.</div>
@@ -456,7 +478,9 @@
     </div>
     <div class="modal-list" id="modalList"></div>
     <div class="modal-foot">
+      <span class="hint" id="modalSelectionHint" style="flex:1;margin:0;align-self:center;"></span>
       <button class="btn-secondary" id="modalCancel">Cancel</button>
+      <button class="btn-secondary is-hidden" id="modalSelectFiles">Select files</button>
       <button class="btn-primary" id="modalSelect">Select this folder</button>
     </div>
   </div>
@@ -569,18 +593,63 @@ $('bitrateSelect').addEventListener('change', updateBitrateDesc);
 // ---------- folder browser modal (shared between source + destination) ----------
 let browseCallbackPath = '';
 let browseTargetInput = 'sourceInput';
+let browseShowFiles = false;      // only offer file checkboxes when picking a source, not a destination
+let selectedFiles = new Set();    // filenames checked in the CURRENT folder
+let selectedSourceFiles = null;   // committed selection, sent as source_files — null means "whole folder"
 
 $('browseSourceBtn').addEventListener('click', () => openBrowser('sourceInput', $('sourceInput').value || null));
+$('pickFilesBtn').addEventListener('click', () => openBrowser('sourceInput', $('sourceInput').value || null));
 $('browseDestBtn').addEventListener('click', () => openBrowser('destInput', $('destInput').value || null));
 $('modalCancel').addEventListener('click', () => $('browseBackdrop').classList.remove('show'));
 $('modalSelect').addEventListener('click', () => {
   $(browseTargetInput).value = browseCallbackPath;
+  if(browseTargetInput === 'sourceInput'){
+    selectedSourceFiles = null;   // "select this folder" always means the whole folder
+    updateSourceFilesHint();
+  }
+  $('browseBackdrop').classList.remove('show');
+});
+$('modalSelectFiles').addEventListener('click', () => {
+  $(browseTargetInput).value = browseCallbackPath;
+  selectedSourceFiles = Array.from(selectedFiles);
+  updateSourceFilesHint();
   $('browseBackdrop').classList.remove('show');
 });
 $('thisPcBtn').addEventListener('click', loadRoot);
 
+// Typing a path by hand means "the whole folder", same as picking one in the browser.
+$('sourceInput').addEventListener('input', () => { selectedSourceFiles = null; updateSourceFilesHint(); });
+
+function updateSourceFilesHint(){
+  const hint = $('sourceFilesHint');
+  if(!hint) return;
+  if(selectedSourceFiles && selectedSourceFiles.length){
+    hint.textContent = `${selectedSourceFiles.length} file(s) selected — only these will be processed.`;
+    hint.classList.add('show');
+  } else {
+    hint.textContent = '';
+    hint.classList.remove('show');
+  }
+}
+
+function updateModalSelectionUI(){
+  const hint = $('modalSelectionHint');
+  const filesBtn = $('modalSelectFiles');
+  if(!browseShowFiles){
+    hint.textContent = '';
+    filesBtn.classList.add('is-hidden');
+    return;
+  }
+  const n = selectedFiles.size;
+  hint.textContent = n ? `${n} file(s) selected` : '';
+  filesBtn.classList.toggle('is-hidden', n === 0);
+  filesBtn.textContent = n ? `Select ${n} file(s)` : 'Select files';
+}
+
 async function openBrowser(targetInputId, path){
   browseTargetInput = targetInputId;
+  browseShowFiles = (targetInputId === 'sourceInput');
+  selectedFiles = new Set();
   $('browseBackdrop').classList.add('show');
   if(path){ await loadDir(path); } else { await loadRoot(); }
 }
@@ -589,6 +658,8 @@ async function loadRoot(){
   const res = await fetch('/api/drives');
   const data = await res.json();
   browseCallbackPath = data.home;
+  selectedFiles = new Set();
+  updateModalSelectionUI();
   $('modalPath').textContent = 'This PC';
   const list = $('modalList');
   list.innerHTML = '';
@@ -612,6 +683,8 @@ async function loadDir(path){
   if(!res.ok){ return; }
   const data = await res.json();
   browseCallbackPath = data.path;
+  selectedFiles = new Set();   // navigating counts as changing your mind about which folder
+  updateModalSelectionUI();
   $('modalPath').textContent = data.path;
   const list = $('modalList');
   list.innerHTML = '';
@@ -631,6 +704,20 @@ async function loadDir(path){
     item.onclick = () => loadDir(full);
     list.appendChild(item);
   });
+  if(browseShowFiles){
+    (data.files || []).forEach(name => {
+      const item = document.createElement('div');
+      item.className = 'modal-item file';
+      const id = 'file-' + Math.random().toString(36).slice(2);
+      item.innerHTML = `<label for="${id}"><input type="checkbox" id="${id}"> 🎵 ${name}</label>`;
+      const checkbox = item.querySelector('input');
+      checkbox.addEventListener('change', () => {
+        if(checkbox.checked){ selectedFiles.add(name); } else { selectedFiles.delete(name); }
+        updateModalSelectionUI();
+      });
+      list.appendChild(item);
+    });
+  }
 }
 
 // ---------- conversion lanes ----------
@@ -698,14 +785,14 @@ $('applyBtn').addEventListener('click', () => startFixJob(false));
 $('cancelBtn').addEventListener('click', cancelJob);
 
 // Both job types stream the same events, so starting them is the same dance.
-async function launch(url, payload, workers, opening){
+async function runToCompletion(url, payload, workers, opening){
   const res = await fetch(url, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
   });
   const data = await res.json();
-  if(!res.ok){ showBanner(data.error || 'Failed to start job.'); return; }
+  if(!res.ok){ showBanner(data.error || 'Failed to start job.'); throw new Error(data.error || 'Failed to start job.'); }
 
   currentJobId = data.job_id;
   $('log').innerHTML = '';
@@ -719,9 +806,21 @@ async function launch(url, payload, workers, opening){
   $('applyBtn').disabled = true;
   $('cancelBtn').classList.add('show');
 
-  evtSource = new EventSource(`/api/stream/${currentJobId}`);
-  evtSource.onmessage = (ev) => handleEvent(JSON.parse(ev.data));
-  evtSource.onerror = () => { evtSource.close(); };
+  return new Promise((resolve, reject) => {
+    evtSource = new EventSource(`/api/stream/${currentJobId}`);
+    evtSource.onmessage = (ev) => {
+      const event = JSON.parse(ev.data);
+      handleEvent(event);
+      if(event.type === 'job_done') resolve(event);
+      if(event.type === 'error') reject(new Error(event.detail || 'Job failed.'));
+    };
+    evtSource.onerror = () => { evtSource.close(); reject(new Error('Connection to the job was lost.')); };
+  });
+}
+
+async function launch(url, payload, workers, opening){
+  try { await runToCompletion(url, payload, workers, opening); }
+  catch(e) { /* already surfaced via showBanner/handleEvent */ }
 }
 
 async function startJob(){
@@ -731,6 +830,7 @@ async function startJob(){
 
   const payload = {
     source_dir,
+    source_files: selectedSourceFiles,
     destination_dir: $('destInput').value.trim(),
     format: $('formatSelect').value,
     bitrate: $('bitrateSelect').value,
@@ -756,16 +856,10 @@ async function startFixJob(dryRun){
     showBanner('Pick at least one thing to fix.');
     return;
   }
-  // Applying edits the user's own library, so make them say yes to it.
-  if(!dryRun && !confirm(
-      `This will edit the files in:\n\n${source_dir}\n\n`
-      + 'Only missing information gets added — existing tags, art and lyrics '
-      + 'are left alone. Continue?')){
-    return;
-  }
 
-  const payload = {
+  const basePayload = {
     source_dir,
+    source_files: selectedSourceFiles,
     fix_metadata: $('fxMeta').checked,
     fix_art: $('fxArt').checked,
     fix_lyrics: $('fxLyrics').checked,
@@ -775,12 +869,47 @@ async function startFixJob(dryRun){
     lrc_sidecar: $('fxSidecar').checked,
     recursive: $('fxRecursive').checked,
     workers: parseInt($('fxWorkers').value, 10) || 4,
-    dry_run: dryRun,
   };
-  await launch('/api/fix/start', payload, payload.workers,
-               () => dryRun
-                 ? 'Preview — showing what would change, writing nothing.'
-                 : `Fixing files in ${source_dir}`);
+
+  if(dryRun){
+    await launch('/api/fix/start', {...basePayload, dry_run: true}, basePayload.workers,
+                 () => 'Preview — showing what would change, writing nothing.');
+    return;
+  }
+
+  // Applying always scans first and shows what was actually found — not
+  // just a generic "are you sure" — so a wrong or unwanted match (e.g. the
+  // wrong cover art) can be caught and skipped before anything is written,
+  // rather than only after the fact in the log.
+  let scan;
+  try {
+    scan = await runToCompletion('/api/fix/start', {...basePayload, dry_run: true}, basePayload.workers,
+                                  () => 'Scanning before making any changes…');
+  } catch(e) {
+    return; // failure already shown via showBanner/handleEvent
+  }
+
+  const stats = scan.stats || {};
+  const changeable = stats.dry || 0;
+  if(changeable === 0){
+    logLine('Nothing to fix — every scanned file already has what it needs.', 'skipped');
+    return;
+  }
+
+  const summary =
+    `Scanned ${stats.total || 0} file(s) in:\n${source_dir}\n\n` +
+    `${changeable} file(s) have something to add — see the log above for exactly ` +
+    `what was found per file (including which cover art or metadata source it came from).\n` +
+    `${stats.skipped || 0} already complete, ${stats.failed || 0} couldn't be read.\n\n` +
+    `Only missing information gets added — nothing already tagged is overwritten.\n\n` +
+    `If anything in the log looks wrong (e.g. the wrong cover art), cancel and re-run ` +
+    `with that option off rather than applying it.\n\n` +
+    `Apply these ${changeable} change(s) now?`;
+
+  if(!confirm(summary)) return;
+
+  await launch('/api/fix/start', {...basePayload, dry_run: false}, basePayload.workers,
+               () => `Applying — fixing files in ${source_dir}`);
 }
 
 async function cancelJob(){

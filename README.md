@@ -32,6 +32,7 @@ It also fixes libraries: FlacPress can fill in <b>missing tags</b>, find <b>miss
 - 🏷️ Copies metadata using **Mutagen** for maximum compatibility
 - 💬 Carries embedded lyrics across too
 - 📁 Mirrors your existing folder structure automatically
+- 📄 Pick a whole folder, or check off individual files — both the UI's folder browser and the CLI (`--files`) support it
 - 🧠 Detects whether `.m4a` files contain **ALAC** or **AAC**
 - 🛑 Real cancellation that immediately terminates running FFmpeg jobs
 - ✅ Output verification with FFprobe

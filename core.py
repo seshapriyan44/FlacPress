@@ -265,15 +265,40 @@ def verify_output(file: Path) -> bool:
         return False
 
 
-def scan_files(source_dir: Path, exclude_root: Optional[Path] = None, extensions=LOSSLESS_EXTENSIONS) -> list[Path]:
+def scan_files(source_dir: Path, exclude_root: Optional[Path] = None, extensions=LOSSLESS_EXTENSIONS,
+               only_files: Optional[list] = None) -> list[Path]:
     """Walk source_dir for lossless files. exclude_root (typically the
     destination folder) is only treated as an exclusion boundary if it
     actually lives inside source_dir — if it's a sibling, a parent (the
     common case now that destination defaults to source_dir.parent), or
     somewhere unrelated, there's nothing to exclude, and treating it as
     one anyway would incorrectly wipe out the entire scan whenever
-    exclude_root happens to be an ancestor of source_dir."""
+    exclude_root happens to be an ancestor of source_dir.
+
+    only_files, if given, skips the recursive walk entirely and just
+    validates that specific list instead — this is what powers picking
+    individual tracks in the UI rather than a whole folder. Paths outside
+    source_dir are silently dropped rather than trusted, since they come
+    from a browser-side selection and resolve_output_path() requires
+    everything to be relative to source_dir anyway."""
     source_dir = source_dir.resolve()
+
+    if only_files is not None:
+        chosen = []
+        for raw in only_files:
+            candidate = Path(raw)
+            if not candidate.is_absolute():
+                candidate = source_dir / candidate
+            candidate = candidate.resolve()
+            if not candidate.is_file() or candidate.suffix.lower() not in extensions:
+                continue
+            try:
+                candidate.relative_to(source_dir)
+            except ValueError:
+                continue
+            chosen.append(candidate)
+        return chosen
+
     active_exclude = None
     if exclude_root:
         candidate = exclude_root.resolve()
@@ -351,6 +376,13 @@ class JobConfig:
     fix_missing_art: bool = False
     fix_missing_lyrics: bool = False
     online_lookups: bool = True   # applies to the three flags above
+
+    # Convert specific files instead of everything under source_dir — e.g.
+    # the user checked 3 tracks in the folder browser rather than picking
+    # the whole album. Paths are relative to source_dir (or absolute; both
+    # work, see scan_files). None means "scan source_dir recursively", the
+    # original behaviour.
+    only_files: Optional[list] = None
 
     def __post_init__(self):
         """Normalise the paths once, here, so nothing downstream has to.
@@ -536,7 +568,7 @@ class ConversionJob:
         source_dir = cfg.source_dir.resolve()
         destination_root = (cfg.destination_dir or source_dir.parent).resolve()
 
-        files = scan_files(source_dir, destination_root)
+        files = scan_files(source_dir, destination_root, only_files=cfg.only_files)
         self.stats["total"] = len(files)
         self.emit("scan_done", total=len(files), output_dir=str(destination_root))
 
